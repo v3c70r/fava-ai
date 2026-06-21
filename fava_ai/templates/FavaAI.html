@@ -1,0 +1,315 @@
+{% extends "_layout.html" %}
+{% block content %}
+<div id="fava-ai-app" class="fava-ai-container">
+  <div class="fava-ai-sidebar">
+    <div class="fava-ai-sidebar-header">
+      <h3>Conversations</h3>
+      <button id="new-conversation-btn" class="btn btn-sm">+ New</button>
+    </div>
+    <div id="conversation-list" class="fava-ai-conv-list"></div>
+    <div class="fava-ai-sidebar-footer">
+      <div class="fava-ai-status">
+        <span id="provider-status" class="status-dot"></span>
+        <span id="provider-name">No provider</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="fava-ai-main">
+    <div id="chat-messages" class="fava-ai-messages">
+      <div class="fava-ai-welcome">
+        <h2>Fava AI Assistant</h2>
+        <p>Ask questions about your ledger data. Example:</p>
+        <ul>
+          <li>"What is the operating currency and date range of this ledger?"</li>
+          <li>"What are my top 5 expenses by total amount?"</li>
+          <li>"What recurring payments do I have?"</li>
+          <li>"Show me my spending on food by month."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="fava-ai-input-area">
+      <textarea id="chat-input" placeholder="Ask about your ledger..." rows="2"></textarea>
+      <button id="send-btn" class="btn">Send</button>
+    </div>
+  </div>
+
+  <div id="fava-ai-panel" class="fava-ai-panel" style="display:none;">
+    <div class="fava-ai-panel-tabs">
+      <button class="panel-tab active" data-tab="tools">Tools</button>
+      <button class="panel-tab" data-tab="config">Config</button>
+      <button class="panel-tab" data-tab="providers">Providers</button>
+    </div>
+    <div id="panel-tools" class="panel-content active"></div>
+    <div id="panel-config" class="panel-content"></div>
+    <div id="panel-providers" class="panel-content"></div>
+  </div>
+</div>
+
+<style>
+.fava-ai-container {
+  display: flex;
+  height: calc(100vh - 60px);
+  gap: 0;
+}
+.fava-ai-sidebar {
+  width: 260px;
+  border-right: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+.fava-ai-sidebar-header {
+  padding: 12px;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fava-ai-sidebar-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.fava-ai-conv-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.fava-ai-conv-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fava-ai-conv-item:hover {
+  background: #e8e8e8;
+}
+.fava-ai-conv-item.active {
+  background: #d4e5ff;
+}
+.fava-ai-conv-item .conv-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fava-ai-conv-item .conv-delete {
+  opacity: 0;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  color: #999;
+}
+.fava-ai-conv-item:hover .conv-delete {
+  opacity: 1;
+}
+.fava-ai-conv-item .conv-delete:hover {
+  color: #e44;
+}
+.fava-ai-sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid #ddd;
+  font-size: 12px;
+}
+.fava-ai-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.fava-ai-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px;
+}
+.fava-ai-welcome {
+  text-align: center;
+  margin-top: 60px;
+  color: #666;
+}
+.fava-ai-welcome h2 {
+  color: #333;
+  margin-bottom: 16px;
+}
+.fava-ai-welcome ul {
+  display: inline-block;
+  text-align: left;
+  margin-top: 8px;
+}
+.fava-ai-welcome li {
+  margin-bottom: 4px;
+  cursor: pointer;
+  color: #2266cc;
+}
+.fava-ai-welcome li:hover {
+  text-decoration: underline;
+}
+.fava-ai-input-area {
+  padding: 12px 24px;
+  border-top: 1px solid #ddd;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.fava-ai-input-area textarea {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  resize: none;
+  font-family: inherit;
+  font-size: 14px;
+}
+.fava-ai-input-area textarea:focus {
+  outline: none;
+  border-color: #66a;
+}
+.fava-ai-panel {
+  width: 300px;
+  border-left: 1px solid #ddd;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.fava-ai-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+}
+.panel-tab {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: center;
+  border-bottom: 2px solid transparent;
+}
+.panel-tab.active {
+  border-bottom-color: #66a;
+  font-weight: 600;
+}
+.panel-content {
+  display: none;
+  padding: 12px;
+  font-size: 13px;
+  overflow-y: auto;
+}
+.panel-content.active {
+  display: block;
+}
+
+.message {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  max-width: 85%;
+}
+.message.user {
+  background: #e3f0ff;
+  margin-left: auto;
+}
+.message.assistant {
+  background: #f5f5f5;
+}
+.message.assistant .content {
+  line-height: 1.5;
+}
+.message.assistant .content p { margin: 4px 0; }
+.message.assistant .content code {
+  background: #e8e8e8;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+.message.assistant .content pre {
+  background: #e8e8e8;
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.tool-call-card {
+  margin: 8px 0;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+}
+.tool-call-card summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  background: #f9f9f9;
+  border-radius: 6px;
+}
+.tool-call-card .tool-detail {
+  padding: 8px 10px;
+  font-size: 12px;
+  border-top: 1px solid #eee;
+}
+.tool-call-card pre {
+  background: #f5f5f5;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 4px 0 0;
+}
+
+.provenance-footer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #999;
+}
+.provenance-footer details {
+  display: inline;
+}
+.provenance-footer summary {
+  cursor: pointer;
+  color: #888;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  color: #888;
+  font-size: 13px;
+}
+.loading .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #ddd;
+  border-top-color: #66a;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.status-dot.connected { background: #4a4; }
+.status-dot.disconnected { background: #e44; }
+</style>
+{% endblock %}

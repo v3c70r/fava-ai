@@ -747,9 +747,227 @@ class FavaAI(FavaExtensionBase):
 
 ---
 
-## Test Plan
+## Test Strategy
 
-### Per-Phase Verification
+This project has an uncommon shape — a Fava extension that orchestrates non-deterministic LLM calls, processes deterministic ledger data, and generates human-readable markdown. A single test layer won't cut it.
+
+### Six-Layer Architecture
+
+```
+Layer 5: Quality Assessment (manual, periodic)
+Layer 4: LLM Interaction Tests (mock provider, recorded responses)
+Layer 3: Fava Extension Integration (Flask test client)
+Layer 2: Ledger Fixture Integration (beancount loader, extraction pipeline)
+Layer 1: Deterministic Unit Tests (pure functions, temp files)
+Layer 0: UI Smoke Tests (optional, Phase 3+)
+```
+
+---
+
+### Layer 1: Deterministic Unit Tests (Target: 80%+ coverage)
+
+Everything that doesn't touch Fava or an LLM. Fast, parallel, CI-friendly.
+
+| Module | What to test | Mock needed? |
+|---|---|---|
+| `config.py` | Merge logic, env-var substitution, defaults | None |
+| `storage/database.py` | Schema creation, migration, CRUD | Temp SQLite file |
+| `storage/conversations.py` | Message ordering, cascade delete, role validation | Temp SQLite |
+| `tools/base.py` | ToolDefinition JSON Schema generation, ToolResult serialization | None |
+| `tools/registry.py` | Register, discover, get_definitions, execute dispatch | Mock tools |
+| `knowledge/wiki.py` | Read/write page, YAML frontmatter parse, index.md update | Temp dir |
+| `knowledge/extractors/*.py` | Each extractor with known fixture input → expected output | Pre-loaded entries |
+| `agent/limits.py` | Iteration cap, tool call cap, timeout | None |
+| `agent/context.py` | System prompt assembly, token budgeting, KB snippet injection | Mock ledger info |
+| `prompts/registry.py` | Load built-in + user prompts, discover, search | Temp dir |
+| `provenance/tracker.py` | Record steps, serialize trace, query by message_id | None |
+
+**Key insight for extractor tests:** Extractors take `entries` (beancount data structures) as input. Construct synthetic `Transaction`, `Open`, `Close` objects directly in tests — no need to parse beancount files. Only use real fixtures for Layer 2.
+
+```python
+# Example: deterministic extractor test
+def test_merchant_extractor_counts():
+    entries = [
+        Transaction(date=date(2025,1,1), payee="Amazon", ...),
+        Transaction(date=date(2025,2,1), payee="Amazon", ...),
+        Transaction(date=date(2025,3,1), payee="Netflix", ...),
+    ]
+    merchants = MerchantExtractor().extract(entries)
+    assert merchants["Amazon"].total_transactions == 2
+    assert merchants["Netflix"].total_transactions == 1
+```
+
+---
+
+### Layer 2: Ledger Fixture Integration Tests
+
+Parse real fixture files, verify extraction correctness. No LLM, no Fava HTTP.
+
+| Test | Fixture | What it verifies |
+|---|---|---|
+| `test_parse_all_fixtures` | All 9 fixtures | Every fixture loads with 0 parse errors |
+| `test_account_extraction` | Each fixture | Correct account count, hierarchy depth, metadata presence |
+| `test_merchant_extraction` | finzytrack-fake | 404 merchants, top payees correct |
+| `test_merchant_extraction_pt` | financeiro | Portuguese payees detected, normalized |
+| `test_recurring_detection` | finzytrack-fake | Monthly patterns found (Comcast, T-Mobile, etc.) |
+| `test_recurring_detection_example` | beancount-example | "BANK FEES", "EDISON POWER" detected |
+| `test_multi_currency` | boilerplate-cn | 17 commodities, CNY/USD/HKD/BTC/ETH |
+| `test_chinese_metadata` | boilerplate-cn | 55 accounts have Chinese `name:` metadata |
+| `test_french_accounts` | comptabilite | Account roots are "Actifs", "Passifs", etc. |
+| `test_gifi_metadata` | comptabilite | 77 accounts have `gifi:` tax code metadata |
+| `test_wiki_generation` | Each fixture | Wiki pages created, valid markdown, correct frontmatter |
+| `test_index_and_log` | Each fixture | index.md updated, log.md has ingest entry |
+| `test_rebuild_idempotent` | beancount-example | Second extraction without ledger change = no-op |
+
+These run without Fava — just `beancount.loader.load_file()` + the extraction pipeline.
+
+---
+
+### Layer 3: Fava Extension Integration Tests
+
+Run against a real Fava instance with test fixtures loaded. Use Flask's test client.
+
+| Test | What it verifies |
+|---|---|
+| `test_extension_loads` | Extension registered, appears in extension list |
+| `test_report_page_renders` | `GET /<bfile>/extension/FavaAI/` returns 200 with chat UI |
+| `test_chat_endpoint` | `POST /chat` returns JSON with assistant content (mock provider) |
+| `test_stream_endpoint` | `POST /chat/stream` returns SSE events (mock provider) |
+| `test_conversation_crud` | Create, list, get, delete through API |
+| `test_tool_list_endpoint` | `GET /tools` returns all registered tools with schemas |
+| `test_config_endpoint` | `GET /config` returns current config |
+| `test_knowledge_status` | `GET /knowledge/status` returns extraction status |
+| `test_wiki_browse` | `GET /knowledge/accounts` returns account pages |
+| `test_provider_test_endpoint` | `POST /providers/test` with valid Ollama config → success |
+
+**Note:** Fava uses `g.ledger` (Flask app context). Study Fava's own test suite for app context setup patterns.
+
+---
+
+### Layer 4: LLM Interaction Tests
+
+LLM output is non-deterministic. Use a mock provider for CI.
+
+```python
+class MockProvider(BaseProvider):
+    def __init__(self, responses: list[ChatResponse]):
+        self.responses = responses
+        self.call_index = 0
+
+    def chat(self, messages, tools=None, **kwargs):
+        response = self.responses[self.call_index]
+        self.call_index += 1
+        return response
+
+# Test agent runtime with predetermined tool call sequence
+def test_agent_multi_step():
+    provider = MockProvider([
+        ChatResponse(tool_calls=[ToolCall(id="1", function=FunctionCall(
+            name="run_bql",
+            arguments='{"query":"SELECT sum(position) WHERE account ~ \\"Food\\""}'
+        ))]),
+        ChatResponse(content="You spent $847.32 on food."),
+    ])
+    agent = AgentRuntime(provider=provider, tools=registry)
+    result = agent.run("How much did I spend on food?")
+    assert "847.32" in result.content
+```
+
+| Test | What it verifies |
+|---|---|
+| `test_single_step_agent` | Agent returns content when model gives final answer |
+| `test_tool_calling_loop` | Agent calls tool, passes result back, gets final answer |
+| `test_max_iterations` | Agent stops at limit even if model keeps requesting tools |
+| `test_tool_error_handling` | When tool fails, error is reported back to model |
+| `test_context_builder` | System prompt includes ledger info, tool list |
+| `test_kb_context_injection` | When user asks about spending, relevant wiki pages appear in prompt |
+| `test_streaming_chunks` | Provider yields correct chunk sequence |
+
+Future enhancement (Phase 3+): record/replay real LLM responses for E2E model quality testing.
+
+---
+
+### Layer 5: Quality Assessment (Phase 3, manual/periodic)
+
+Not CI. Manual or periodic. Depends on having models available.
+
+| Check | Method |
+|---|---|
+| Wiki page correctness | Compare extracted facts against known fixture data |
+| Agent answer accuracy | 5 standard questions per fixture against a strong model, human review |
+| Recurring detection precision/recall | Known recurring patterns in finzytrack-fake |
+| Multi-language account name preservation | ZH/PT/FR account names appear correctly in wiki pages |
+| Markdown validity | All generated wiki pages parse as valid markdown + YAML frontmatter |
+
+---
+
+### Layer 6: UI Smoke Tests (Phase 3+, optional)
+
+| Test | Tool |
+|---|---|
+| Chat page loads without JS errors | Playwright or manual |
+| Send message → response appears | Playwright |
+| Tool call card expands/collapses | Playwright |
+| Model selector shows configured providers | Playwright |
+| Conversation switcher works | Playwright |
+
+---
+
+### pytest Configuration
+
+```ini
+# pytest.ini
+[pytest]
+testpaths = tests
+markers =
+    unit: Fast deterministic tests (no Fava, no LLM)
+    fixture: Tests that use beancount fixture files (no Fava, no LLM)
+    integration: Tests that require a running Fava instance
+    llm: Tests that require a real or mock LLM provider
+    slow: Tests that take >5 seconds
+    quality: Manual quality assessment tests
+```
+
+### CI Pipeline
+
+```yaml
+# .github/workflows/test.yml
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv run pytest -m "unit" -v
+
+  fixture:
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv run pytest -m "fixture" -v
+
+  integration:
+    needs: unit
+    steps:
+      - run: uv run pytest -m "integration" -v
+
+  # LLM tests only run manually (require model + possibly API keys)
+  llm:
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - run: uv run pytest -m "llm" -v
+```
+
+### Practical Starting Point
+
+For implementation, start with **Layer 1** and **Layer 2**. They give the highest confidence per line of test code, run fast in CI, and catch the bugs most likely to occur in a ledger-processing pipeline.
+
+Layer 3 (Fava integration) can be one or two smoke tests initially, expanded as the API surface grows. Layer 4 (mock LLM) should be added as soon as the agent runtime exists — small effort, high payoff since it validates the entire orchestration logic.
+
+---
+
+### Per-Phase Verification Checklist
 
 **Phase 1 checks:**
 - [ ] `uv pip install -e .` succeeds

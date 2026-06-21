@@ -1,0 +1,18 @@
+[project]
+name = "fava-ai"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fava>=1.27",
+    "beancount>=2.3",
+    "litellm>=1.85",
+    "pyyaml>=6.0",
+    "jinja2>=3.0",
+]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fava_ai*"]
