@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fava_ai.models.base import Message
 
@@ -15,7 +15,7 @@ def list_conversations(db) -> list[dict]:
 
 def create_conversation(db, title: str = "", provider: str = "", model: str = "") -> dict:
     conv_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(timezone.utc).isoformat() + "Z"
     if not title:
         title = "New conversation"
     db.conn.execute(
@@ -58,7 +58,7 @@ def delete_conversation(db, conv_id: str):
 
 def save_message(db, conv_id: str, message: Message):
     msg_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(timezone.utc).isoformat() + "Z"
 
     tool_calls_json = None
     if message.tool_calls:
@@ -129,7 +129,7 @@ def load_messages(db, conv_id: str) -> list[Message]:
 
 
 def update_title(db, conv_id: str, title: str):
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(timezone.utc).isoformat() + "Z"
     db.conn.execute(
         "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
         (title, now, conv_id),

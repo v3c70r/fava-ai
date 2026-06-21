@@ -72,20 +72,30 @@ class WikiManager:
 
     def search(self, query: str, max_results: int = 20) -> list[dict]:
         query_lower = query.lower()
+        # Split into words for better matching; also keep full query for exact match
+        query_words = set(query_lower.split())
         results = []
         for md_file in self.wiki_dir.rglob("*.md"):
             if md_file.name.startswith("_"):
                 continue
             try:
                 text = md_file.read_text(encoding="utf-8")
-                if query_lower in text.lower():
+                text_lower = text.lower()
+                # Match if full query or any significant word is in the text
+                match = query_lower in text_lower
+                if not match:
+                    match = any(
+                        len(w) > 2 and w in text_lower
+                        for w in query_words
+                    )
+                if match:
                     rel = str(md_file.relative_to(self.wiki_dir))
                     page = WikiPage.from_file(md_file)
                     results.append({
                         "path": rel,
                         "title": page.metadata.get("title", md_file.stem),
                         "type": page.metadata.get("type", ""),
-                        "snippet": self._snippet(text, query_lower, 120),
+                        "snippet": self._snippet(text, query_words, 120),
                     })
             except Exception:
                 continue
@@ -93,12 +103,19 @@ class WikiManager:
                 break
         return results
 
-    def _snippet(self, text: str, query: str, context: int = 120) -> str:
-        idx = text.lower().find(query)
-        if idx < 0:
-            return text[:context]
-        start = max(0, idx - context // 2)
-        end = min(len(text), idx + len(query) + context // 2)
+    def _snippet(self, text: str, query_words: set, context: int = 120) -> str:
+        text_lower = text.lower()
+        # Find first matching word position
+        best_pos = len(text)
+        for w in query_words:
+            if len(w) > 2:
+                pos = text_lower.find(w)
+                if 0 <= pos < best_pos:
+                    best_pos = pos
+        if best_pos >= len(text):
+            return text[:context].replace("\n", " ")
+        start = max(0, best_pos - context // 2)
+        end = min(len(text), best_pos + context // 2)
         return text[start:end].replace("\n", " ")
 
     # ── List / Structure ──────────────────────────────────────────
