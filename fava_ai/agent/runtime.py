@@ -43,7 +43,7 @@ class AgentRuntime:
 
         if messages is None:
             messages = []
-            system_prompt = self._context_builder.build_system_prompt()
+            system_prompt = self._context_builder.build_system_prompt(user_message)
             messages.append(Message(role="system", content=system_prompt))
 
         messages.append(Message(role="user", content=user_message))

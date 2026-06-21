@@ -2,21 +2,30 @@ from fava_ai.tools.registry import ToolRegistry
 
 
 class ContextBuilder:
-    def __init__(self, ledger, tool_registry: ToolRegistry):
+    def __init__(self, ledger, tool_registry: ToolRegistry, wiki_manager=None):
         self._ledger = ledger
         self._tool_registry = tool_registry
+        self._wiki = wiki_manager
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, user_message: str | None = None) -> str:
         tools_desc = self._build_tools_description()
         ledger_info = self._get_ledger_summary()
+        kb_context = self._get_kb_context(user_message) if user_message and self._wiki else ""
 
-        return f"""You are an AI assistant for a Beancount/Fava personal finance ledger.
+        prompt = f"""You are an AI assistant for a Beancount/Fava personal finance ledger.
 Your role is to help the user understand and analyze their financial data.
 
 ## Ledger Summary
 {ledger_info}
+"""
+        if kb_context:
+            prompt += f"""## Knowledge Base Context
+The following information was extracted from the wiki knowledge base:
 
-## Available Tools
+{kb_context}
+
+"""
+        prompt += f"""## Available Tools
 {tools_desc}
 
 ## Guidelines
@@ -38,7 +47,29 @@ Your role is to help the user understand and analyze their financial data.
    - WRONG: SELECT account, sum(position) AS total ... ORDER BY total (use ORDER BY sum(position) instead)
 7. Format monetary amounts clearly with currency symbols.
 8. If you're not sure about something, use the tools to check.
+9. Use wiki_search to find relevant knowledge before querying the ledger directly.
 """
+        return prompt
+
+    def _get_kb_context(self, user_message: str) -> str:
+        if not self._wiki:
+            return ""
+        try:
+            results = self._wiki.search(user_message, max_results=5)
+            if not results:
+                return ""
+            lines = []
+            for r in results:
+                page = self._wiki.read(r["path"])
+                lines.append(f"### {r['title']}")
+                body = page.content
+                if len(body) > 500:
+                    body = body[:500] + "..."
+                lines.append(body)
+                lines.append("")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     def _build_tools_description(self) -> str:
         lines = []

@@ -39,6 +39,9 @@ class FavaAI(FavaExtensionBase):
         from fava_ai.models.registry import ProviderRegistry
         from fava_ai.tools.registry import ToolRegistry
         from fava_ai.tools.builtin.ledger import register_ledger_tools
+        from fava_ai.tools.builtin.wiki import register_wiki_tools
+        from fava_ai.knowledge.wiki import WikiManager
+        from fava_ai.knowledge.engine import KnowledgeEngine
 
         self._config_manager = ConfigManager(
             self.ledger, self.config or {}, self.config_dir
@@ -50,13 +53,24 @@ class FavaAI(FavaExtensionBase):
 
         self._provider_registry = ProviderRegistry(self._config_manager)
 
+        wiki_dir = self.config_dir / "wiki"
+        self._wiki_manager = WikiManager(wiki_dir)
+
+        knowledge_config = self._config_manager.get_knowledge_config()
+        self._knowledge_engine = KnowledgeEngine(
+            self._wiki_manager, knowledge_config
+        )
+
         self._tool_registry = ToolRegistry()
         register_ledger_tools(self._tool_registry, self.ledger)
+        register_wiki_tools(self._tool_registry, self._wiki_manager)
 
         from fava_ai.agent.runtime import AgentRuntime
         from fava_ai.agent.context import ContextBuilder
 
-        context_builder = ContextBuilder(self.ledger, self._tool_registry)
+        context_builder = ContextBuilder(
+            self.ledger, self._tool_registry, self._wiki_manager
+        )
 
         self._agent_runtime = AgentRuntime(
             provider_registry=self._provider_registry,
@@ -330,6 +344,46 @@ class FavaAI(FavaExtensionBase):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @extension_endpoint("knowledge/status", methods=["GET"])
+    def api_knowledge_status(self):
+        if not self._wiki_manager:
+            return jsonify({"enabled": False})
+        wiki_dir = self._wiki_manager.wiki_dir
+        pages = sum(1 for _ in wiki_dir.rglob("*.md")) if wiki_dir.exists() else 0
+        return jsonify({
+            "enabled": True,
+            "wiki_dir": str(wiki_dir),
+            "pages": pages,
+            "has_overview": self._wiki_manager.exists("overview.md"),
+        })
+
+    @extension_endpoint("knowledge/pages", methods=["GET"])
+    def api_knowledge_pages(self):
+        if not self._wiki_manager:
+            return jsonify([])
+        prefix = request.args.get("prefix", "")
+        return jsonify(self._wiki_manager.list_pages(prefix))
+
+    @extension_endpoint("knowledge/pages/<path:rel_path>", methods=["GET"])
+    def api_knowledge_page(self, rel_path):
+        if not self._wiki_manager:
+            return jsonify({"error": "No wiki"}), 404
+        if not self._wiki_manager.exists(rel_path):
+            return jsonify({"error": "Not found"}), 404
+        page = self._wiki_manager.read(rel_path)
+        return jsonify({
+            "path": rel_path,
+            "title": page.metadata.get("title", ""),
+            "type": page.metadata.get("type", ""),
+            "metadata": page.metadata,
+            "content": page.content,
+        })
+
     def after_load_file(self):
-        """Fires on ledger load/reload."""
-        pass
+        """Fires on ledger load/reload. Rebuild knowledge base if changed."""
+        if self._knowledge_engine and self._knowledge_engine.needs_rebuild(
+            self.ledger.all_entries
+        ):
+            self._knowledge_engine.extract_all(
+                self.ledger.all_entries, self.ledger.options
+            )
