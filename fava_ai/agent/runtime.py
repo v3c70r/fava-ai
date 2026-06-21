@@ -1,9 +1,11 @@
-import json
+"""AgentRuntime — orchestration loop with provenance tracking."""
+
 import time
 import uuid
 
 from fava_ai.models.base import Message
 from fava_ai.agent.limits import ExecutionLimits, LimitExceeded
+from fava_ai.provenance.tracker import ExecutionTracker
 
 
 class AgentRuntime:
@@ -41,6 +43,8 @@ class AgentRuntime:
 
         conversation_id = conversation_id or str(uuid.uuid4())
 
+        tracker = ExecutionTracker()
+
         if messages is None:
             messages = []
             system_prompt = self._context_builder.build_system_prompt(user_message)
@@ -52,21 +56,13 @@ class AgentRuntime:
         tool_call_count = 0
         start_time = time.time()
 
-        trace_steps = []
-
         for iteration in range(self._limits.max_iterations):
             if time.time() - start_time > self._limits.timeout_seconds:
                 raise LimitExceeded("timeout")
 
-            trace_steps.append({
-                "step_index": iteration,
-                "step_type": "plan",
-                "started_at": time.time(),
-            })
+            tracker.record_plan(iteration)
 
             response = provider.chat(messages, tools=tools)
-
-            trace_steps[-1]["completed_at"] = time.time()
 
             if response.has_tool_calls():
                 messages.append(response.as_message())
@@ -86,16 +82,13 @@ class AgentRuntime:
                         result_content = f"Tool error: {e}"
                         result_error = str(e)
 
-                    trace_steps.append({
-                        "step_index": iteration,
-                        "step_type": "tool_call",
-                        "tool_name": tool_name,
-                        "tool_input": tc.function.arguments,
-                        "tool_output": result_content[:500] if result_error is None else None,
-                        "error": result_error,
-                        "started_at": time.time(),
-                        "completed_at": time.time(),
-                    })
+                    tracker.record_tool_call(
+                        iteration=iteration,
+                        tool_name=tool_name,
+                        tool_input=tc.function.arguments,
+                        tool_output=result_content,
+                        error=result_error,
+                    )
 
                     messages.append(Message(
                         role="tool",
@@ -105,18 +98,15 @@ class AgentRuntime:
                     ))
 
             elif response.content is not None:
-                trace_steps.append({
-                    "step_index": iteration,
-                    "step_type": "synthesis",
-                    "completed_at": time.time(),
-                })
+                tracker.record_synthesis(iteration)
 
                 return {
                     "conversation_id": conversation_id,
                     "content": response.content,
                     "messages": messages,
                     "usage": response.usage,
-                    "trace": trace_steps,
+                    "provenance": tracker.to_dict(),
+                    "provenance_summary": tracker.provenance_summary(),
                     "tool_call_count": tool_call_count,
                 }
 

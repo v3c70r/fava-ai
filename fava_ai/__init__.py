@@ -29,6 +29,7 @@ class FavaAI(FavaExtensionBase):
         self._tool_registry = None
         self._wiki_manager = None
         self._knowledge_engine = None
+        self._prompt_registry = None
         self._agent_runtime = None
 
         self._init_components()
@@ -64,6 +65,17 @@ class FavaAI(FavaExtensionBase):
         self._tool_registry = ToolRegistry()
         register_ledger_tools(self._tool_registry, self.ledger)
         register_wiki_tools(self._tool_registry, self._wiki_manager)
+
+        from fava_ai.tools.builtin.dashboard import register_dashboard_tools
+        register_dashboard_tools(self._tool_registry, self.ledger)
+
+        from fava_ai.tools.loader import load_external_tools
+        external_tools_dir = self.config_dir / "tools"
+        for ext_tool in load_external_tools(external_tools_dir):
+            self._tool_registry.register(ext_tool)
+
+        from fava_ai.prompts.registry import PromptRegistry
+        self._prompt_registry = PromptRegistry(self.config_dir)
 
         from fava_ai.agent.runtime import AgentRuntime
         from fava_ai.agent.context import ContextBuilder
@@ -155,7 +167,8 @@ class FavaAI(FavaExtensionBase):
                 "conversation_id": conv_id,
                 "content": result["content"],
                 "usage": result.get("usage"),
-                "trace": result.get("trace", []),
+                "provenance": result.get("provenance", {}),
+                "provenance_summary": result.get("provenance_summary", ""),
                 "tool_call_count": result.get("tool_call_count", 0),
             })
 
@@ -192,11 +205,12 @@ class FavaAI(FavaExtensionBase):
 
                 yield f"data: {json.dumps({'type': 'content', 'content': result['content'], 'conversation_id': result['conversation_id']})}\n\n"
 
-                for step in result.get("trace", []):
-                    if step["step_type"] == "tool_call":
+                provenance = result.get("provenance", {})
+                for step in provenance.get("steps", []):
+                    if step.get("step_type") == "tool_call":
                         yield f"data: {json.dumps({'type': 'tool_call', 'step': step})}\n\n"
 
-                yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'usage': result.get('usage')})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'usage': result.get('usage'), 'provenance_summary': result.get('provenance_summary', '')})}\n\n"
 
             except LimitExceeded as e:
                 yield f"data: {json.dumps({'type': 'error', 'error': f'Limit exceeded: {e}'})}\n\n"
@@ -378,6 +392,35 @@ class FavaAI(FavaExtensionBase):
             "metadata": page.metadata,
             "content": page.content,
         })
+
+    @extension_endpoint("prompts", methods=["GET"])
+    def api_list_prompts(self):
+        if not self._prompt_registry:
+            return jsonify([])
+        return jsonify(self._prompt_registry.list_prompts())
+
+    @extension_endpoint("prompts/<name>", methods=["GET"])
+    def api_get_prompt(self, name):
+        if not self._prompt_registry:
+            return jsonify({"error": "No prompt registry"}), 404
+        prompt = self._prompt_registry.get(name)
+        if not prompt:
+            return jsonify({"error": f"Prompt not found: {name}"}), 404
+        return jsonify({
+            "id": prompt.get("id"),
+            "name": prompt.get("name"),
+            "description": prompt.get("description"),
+            "category": prompt.get("category"),
+            "content": prompt.get("content"),
+        })
+
+    @extension_endpoint("traces/<message_id>", methods=["GET"])
+    def api_get_trace(self, message_id):
+        if not self._db:
+            return jsonify({"error": "No database"}), 500
+        from fava_ai.storage.traces import get_traces
+        traces = get_traces(self._db, message_id)
+        return jsonify(traces)
 
     def after_load_file(self):
         """Fires on ledger load/reload. Rebuild knowledge base if changed."""
