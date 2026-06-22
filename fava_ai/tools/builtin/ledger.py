@@ -174,7 +174,7 @@ class AccountDetailsTool(BaseTool):
 
         root = realization.realize(entries)
         acct_node = realization.get_or_create(root, account)
-        balance = acct_node.balance.to_string() if acct_node.balance else "0"
+        balance = acct_node.balance.to_string() if not acct_node.balance.is_empty() else "0"
 
         result = {
             "account": account,
