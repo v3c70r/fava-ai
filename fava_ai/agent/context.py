@@ -34,17 +34,35 @@ The following information was extracted from the wiki knowledge base:
 3. If a tool returns an error, explain the error to the user.
 4. Be precise with numbers and dates.
 5. Do not make up financial data - only report what the tools return.
-6. When using run_bql, write valid BQL queries. The syntax is:
-   SELECT <columns> WHERE <posting-filter> GROUP BY <key> ORDER BY <col> DESC LIMIT <n>
-   - FROM clause is OPTIONAL (omit it for basic queries, it defaults to all transactions)
-   - WHERE filters POSTINGS, not entries. Use `account ~ 'Expenses'` regex match.
-   - Columns: date, account, position, payee, narration, balance, change
-   - Aggregate: sum(position), count(*), first(date), last(date)
-   - Functions: COST(position), UNITS(position), YEAR(date), MONTH(date)
-   - Date literals: 2024-01-01 (YYYY-MM-DD format)
-   - Correct: SELECT account, sum(position) WHERE account ~ 'Expenses' GROUP BY account ORDER BY sum(position) DESC LIMIT 3
-   - WRONG: SELECT ... FROM account WHERE ... (no FROM-account, no AS aliases in GROUP BY)
-   - WRONG: SELECT account, sum(position) AS total ... ORDER BY total (use ORDER BY sum(position) instead)
+6. When using run_bql, copy one of these templates exactly. Only change the word "Expenses" to the account you need.
+
+   Top expenses by category:
+   SELECT account, sum(position) WHERE account ~ 'Expenses' GROUP BY account ORDER BY sum(position) DESC LIMIT 3
+
+   Filter by date range:
+   SELECT date, account, position WHERE date >= 2014-01-01 AND date <= 2014-12-31
+
+   Count per account:
+   SELECT account, count(*) WHERE account ~ 'Expenses' GROUP BY account ORDER BY count(*) DESC LIMIT 10
+
+   Cost basis by account:
+   SELECT account, sum(cost(position)) WHERE account ~ 'Assets' GROUP BY account
+
+   List unique payees:
+   SELECT DISTINCT payee
+
+   Journal of all postings for an account:
+   SELECT date, payee, narration, account, position WHERE account ~ 'Expenses'
+
+   Key rules (failure to follow = wrong result):
+   - NEVER write "FROM". BQL has no FROM clause.
+   - NEVER write "AS" or try to rename columns.
+   - Accounts use colons: Expenses:Food:Restaurant (never dashes or slashes).
+   - Use 'Expenses' to match all expense accounts, 'Assets' for assets, etc.
+   - sum(position) = total amount. cost(position) = cost basis.
+   - position = posting amount. account = account name. payee = payee name.
+   - Date format: YYYY-MM-DD. No quotes.
+   - If run_bql returns an error twice in a row, use list_accounts instead.
 7. Format monetary amounts clearly with currency symbols.
 8. If you're not sure about something, use the tools to check.
 9. Use wiki_search to find relevant knowledge before querying the ledger directly.

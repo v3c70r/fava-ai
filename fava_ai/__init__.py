@@ -140,16 +140,14 @@ class FavaAI(FavaExtensionBase):
             conv_id = result["conversation_id"]
             if self._db:
                 from fava_ai.storage.conversations import (
-                    create_conversation,
-                    save_message,
-                    update_title,
+                    create_conversation, save_message, update_title,
                 )
                 if not conversation_id:
                     provider = provider_name or (
                         self.config.get("provider", "") if self.config else ""
                     )
                     create_conversation(
-                        self._db, title=user_message[:80],
+                        self._db, id=conv_id, title=user_message[:80],
                         provider=provider, model=""
                     )
 
@@ -178,7 +176,7 @@ class FavaAI(FavaExtensionBase):
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
 
-    @extension_endpoint("chat/stream", methods=["POST"])
+    @extension_endpoint("chat_stream", methods=["POST"])
     def api_chat_stream(self):
         data = request.get_json()
         if not data or "message" not in data:
@@ -188,28 +186,21 @@ class FavaAI(FavaExtensionBase):
             try:
                 user_message = data["message"]
                 conversation_id = data.get("conversation_id")
-
                 messages = None
                 if conversation_id and self._db:
                     from fava_ai.storage.conversations import load_messages
                     messages = load_messages(self._db, conversation_id)
-
                 provider_name = data.get("provider")
 
                 result = self._agent_runtime.run(
-                    user_message=user_message,
-                    conversation_id=conversation_id,
-                    messages=messages,
-                    provider_name=provider_name,
+                    user_message=user_message, conversation_id=conversation_id,
+                    messages=messages, provider_name=provider_name,
                 )
 
                 yield f"data: {json.dumps({'type': 'content', 'content': result['content'], 'conversation_id': result['conversation_id']})}\n\n"
-
-                provenance = result.get("provenance", {})
-                for step in provenance.get("steps", []):
+                for step in result.get("provenance", {}).get("steps", []):
                     if step.get("step_type") == "tool_call":
                         yield f"data: {json.dumps({'type': 'tool_call', 'step': step})}\n\n"
-
                 yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'usage': result.get('usage'), 'provenance_summary': result.get('provenance_summary', '')})}\n\n"
 
             except LimitExceeded as e:
@@ -221,17 +212,21 @@ class FavaAI(FavaExtensionBase):
         return Response(
             stream_with_context(generate()),
             mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            },
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
     @extension_endpoint("conversations", methods=["GET"])
-    def api_list_conversations(self):
+    def api_conversations(self):
         if not self._db:
             return jsonify([])
-        from fava_ai.storage.conversations import list_conversations
+        conv_id = request.args.get("id")
+        from fava_ai.storage.conversations import list_conversations, get_conversation, delete_conversation
+        if conv_id:
+            if request.method == "GET":
+                conv = get_conversation(self._db, conv_id)
+                if not conv:
+                    return jsonify({"error": "Not found"}), 404
+                return jsonify(conv)
         return jsonify(list_conversations(self._db))
 
     @extension_endpoint("conversations", methods=["POST"])
@@ -248,47 +243,39 @@ class FavaAI(FavaExtensionBase):
         )
         return jsonify(conv), 201
 
-    @extension_endpoint("conversations/<conv_id>", methods=["GET"])
-    def api_get_conversation(self, conv_id):
+    @extension_endpoint("conversations", methods=["DELETE"])
+    def api_delete_conversation(self):
         if not self._db:
             return jsonify({"error": "No database"}), 500
-        from fava_ai.storage.conversations import get_conversation
-        conv = get_conversation(self._db, conv_id)
-        if not conv:
+        conv_id = request.args.get("id")
+        if not conv_id:
+            return jsonify({"error": "?id= required"}), 400
+        from fava_ai.storage.conversations import delete_conversation as delete_conv
+        from fava_ai.storage.conversations import get_conversation as get_conv
+        existing = get_conv(self._db, conv_id)
+        if not existing:
             return jsonify({"error": "Not found"}), 404
-        return jsonify(conv)
-
-    @extension_endpoint("conversations/<conv_id>", methods=["DELETE"])
-    def api_delete_conversation(self, conv_id):
-        if not self._db:
-            return jsonify({"error": "No database"}), 500
-        from fava_ai.storage.conversations import delete_conversation
-        delete_conversation(self._db, conv_id)
+        delete_conv(self._db, conv_id)
         return jsonify({"deleted": True})
 
     @extension_endpoint("tools", methods=["GET"])
-    def api_list_tools(self):
+    def api_tools(self):
+        name = request.args.get("name")
+        if name:
+            tool = self._tool_registry.get(name)
+            if not tool:
+                return jsonify({"error": f"Tool not found: {name}"}), 404
+            return jsonify({
+                "name": tool.name, "description": tool.description,
+                "parameters": tool.parameters, "permission": tool.permission,
+            })
         tools = []
         for tool in self._tool_registry.list_tools():
             tools.append({
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-                "permission": tool.permission,
+                "name": tool.name, "description": tool.description,
+                "parameters": tool.parameters, "permission": tool.permission,
             })
         return jsonify(tools)
-
-    @extension_endpoint("tools/<name>", methods=["GET"])
-    def api_tool_detail(self, name):
-        tool = self._tool_registry.get(name)
-        if not tool:
-            return jsonify({"error": f"Tool not found: {name}"}), 404
-        return jsonify({
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters,
-            "permission": tool.permission,
-        })
 
     @extension_endpoint("config", methods=["GET"])
     def api_get_config(self):
@@ -296,17 +283,14 @@ class FavaAI(FavaExtensionBase):
             provider_config = self._config_manager.get_provider_config()
             agent_config = self._config_manager.get_agent_config()
             knowledge_config = self._config_manager.get_knowledge_config()
-
             safe_provider_config = {}
             for name, cfg in provider_config.items():
                 safe_cfg = dict(cfg)
                 if "api_key" in safe_cfg:
                     safe_cfg["api_key"] = "***" if safe_cfg["api_key"] else ""
                 safe_provider_config[name] = safe_cfg
-
             return jsonify({
-                "providers": safe_provider_config,
-                "agent": agent_config,
+                "providers": safe_provider_config, "agent": agent_config,
                 "knowledge": knowledge_config,
                 "config_dir": str(self._config_manager.config_dir),
             })
@@ -329,10 +313,10 @@ class FavaAI(FavaExtensionBase):
             return jsonify({"error": str(e)}), 500
 
     @extension_endpoint("providers", methods=["GET"])
-    def api_list_providers(self):
+    def api_providers(self):
         return jsonify(self._provider_registry.list_providers())
 
-    @extension_endpoint("providers/test", methods=["POST"])
+    @extension_endpoint("providers_test", methods=["POST"])
     def api_test_provider(self):
         data = request.get_json() or {}
         provider_name = data.get("provider", "")
@@ -347,8 +331,9 @@ class FavaAI(FavaExtensionBase):
         except Exception as e:
             return jsonify({"connected": False, "error": str(e)})
 
-    @extension_endpoint("providers/<name>/models", methods=["GET"])
-    def api_list_models(self, name):
+    @extension_endpoint("providers_models", methods=["GET"])
+    def api_list_models(self):
+        name = request.args.get("name", "")
         provider = self._provider_registry.get(name)
         if not provider:
             return jsonify({"error": f"Provider not found: {name}"}), 404
@@ -358,69 +343,58 @@ class FavaAI(FavaExtensionBase):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @extension_endpoint("knowledge/status", methods=["GET"])
-    def api_knowledge_status(self):
+    @extension_endpoint("knowledge", methods=["GET"])
+    def api_knowledge(self):
         if not self._wiki_manager:
             return jsonify({"enabled": False})
+        action = request.args.get("action", "status")
+        if action == "pages":
+            prefix = request.args.get("prefix", "")
+            path = request.args.get("path", "")
+            if path:
+                if not self._wiki_manager.exists(path):
+                    return jsonify({"error": "Not found"}), 404
+                page = self._wiki_manager.read(path)
+                return jsonify({
+                    "path": path, "title": page.metadata.get("title", ""),
+                    "type": page.metadata.get("type", ""),
+                    "metadata": page.metadata, "content": page.content,
+                })
+            return jsonify(self._wiki_manager.list_pages(prefix))
+        # status
         wiki_dir = self._wiki_manager.wiki_dir
         pages = sum(1 for _ in wiki_dir.rglob("*.md")) if wiki_dir.exists() else 0
         return jsonify({
-            "enabled": True,
-            "wiki_dir": str(wiki_dir),
-            "pages": pages,
-            "has_overview": self._wiki_manager.exists("overview.md"),
-        })
-
-    @extension_endpoint("knowledge/pages", methods=["GET"])
-    def api_knowledge_pages(self):
-        if not self._wiki_manager:
-            return jsonify([])
-        prefix = request.args.get("prefix", "")
-        return jsonify(self._wiki_manager.list_pages(prefix))
-
-    @extension_endpoint("knowledge/pages/<path:rel_path>", methods=["GET"])
-    def api_knowledge_page(self, rel_path):
-        if not self._wiki_manager:
-            return jsonify({"error": "No wiki"}), 404
-        if not self._wiki_manager.exists(rel_path):
-            return jsonify({"error": "Not found"}), 404
-        page = self._wiki_manager.read(rel_path)
-        return jsonify({
-            "path": rel_path,
-            "title": page.metadata.get("title", ""),
-            "type": page.metadata.get("type", ""),
-            "metadata": page.metadata,
-            "content": page.content,
+            "enabled": True, "wiki_dir": str(wiki_dir),
+            "pages": pages, "has_overview": self._wiki_manager.exists("overview.md"),
         })
 
     @extension_endpoint("prompts", methods=["GET"])
-    def api_list_prompts(self):
+    def api_prompts(self):
         if not self._prompt_registry:
             return jsonify([])
+        name = request.args.get("name")
+        if name:
+            prompt = self._prompt_registry.get(name)
+            if not prompt:
+                return jsonify({"error": f"Prompt not found: {name}"}), 404
+            return jsonify({
+                "id": prompt.get("id"), "name": prompt.get("name"),
+                "description": prompt.get("description"),
+                "category": prompt.get("category"),
+                "content": prompt.get("content"),
+            })
         return jsonify(self._prompt_registry.list_prompts())
 
-    @extension_endpoint("prompts/<name>", methods=["GET"])
-    def api_get_prompt(self, name):
-        if not self._prompt_registry:
-            return jsonify({"error": "No prompt registry"}), 404
-        prompt = self._prompt_registry.get(name)
-        if not prompt:
-            return jsonify({"error": f"Prompt not found: {name}"}), 404
-        return jsonify({
-            "id": prompt.get("id"),
-            "name": prompt.get("name"),
-            "description": prompt.get("description"),
-            "category": prompt.get("category"),
-            "content": prompt.get("content"),
-        })
-
-    @extension_endpoint("traces/<message_id>", methods=["GET"])
-    def api_get_trace(self, message_id):
+    @extension_endpoint("traces", methods=["GET"])
+    def api_traces(self):
         if not self._db:
             return jsonify({"error": "No database"}), 500
+        message_id = request.args.get("message_id", "")
+        if not message_id:
+            return jsonify({"error": "?message_id= required"}), 400
         from fava_ai.storage.traces import get_traces
-        traces = get_traces(self._db, message_id)
-        return jsonify(traces)
+        return jsonify(get_traces(self._db, message_id))
 
     def after_load_file(self):
         """Fires on ledger load/reload. Rebuild knowledge base if changed."""

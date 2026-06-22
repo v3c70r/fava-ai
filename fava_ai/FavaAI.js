@@ -60,26 +60,13 @@ export default {
         });
     },
 
-    async api(method, path, body) {
-        const base = this.ctx.extension.baseURL || '';
-        const url = `${base}${path}`;
-        const opts = {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-        };
-        if (body) opts.body = JSON.stringify(body);
-
-        const resp = await fetch(url, opts);
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ error: resp.statusText }));
-            throw new Error(err.error || 'Request failed');
-        }
-        return resp.json();
+    api(method, path, body, params) {
+        return this.ctx.api.request(path, method, params, body);
     },
 
     async loadConversations() {
         try {
-            this.convList = await this.api('GET', '/conversations');
+            this.convList = await this.api('GET', 'conversations');
             this.renderConvList();
         } catch (e) {
             console.error('Failed to load conversations:', e);
@@ -108,7 +95,7 @@ export default {
 
     async loadConversation(id) {
         try {
-            const conv = await this.api('GET', `/conversations/${id}`);
+            const conv = await this.api('GET', 'conversations', null, { id });
             this.activeConvId = id;
             this.renderConvList();
             this.renderMessages(conv.messages || []);
@@ -137,7 +124,7 @@ export default {
     async deleteConversation(id) {
         if (!confirm('Delete this conversation?')) return;
         try {
-            await this.api('DELETE', `/conversations/${id}`);
+            await this.api('DELETE', 'conversations', null, { id });
             if (this.activeConvId === id) {
                 this.activeConvId = null;
                 this.el.messages.innerHTML = '';
@@ -164,17 +151,17 @@ export default {
             const body = { message };
             if (this.activeConvId) body.conversation_id = this.activeConvId;
 
-            const result = await this.api('POST', '/chat', body);
+            const result = await this.api('POST', 'chat', body);
 
             loadingEl.remove();
 
-            this.addMessage('assistant', result.content, result.trace);
+            this.addMessage('assistant', result.content, result.provenance);
 
             this.activeConvId = result.conversation_id;
             await this.loadConversations();
         } catch (e) {
             loadingEl.remove();
-            this.addMessage('assistant', `Error: ${e.message}`, []);
+            this.addMessage('assistant', `Error: ${e.message}`, null);
         } finally {
             this.el.input.disabled = false;
             this.el.sendBtn.disabled = false;
@@ -182,7 +169,7 @@ export default {
         }
     },
 
-    addMessage(role, content, trace) {
+    addMessage(role, content, provenance) {
         const div = document.createElement('div');
         div.className = `message ${role}`;
 
@@ -190,8 +177,8 @@ export default {
 
         html += `<div class="content">${this.md(content)}</div>`;
 
-        if (trace && trace.length > 0) {
-            const toolSteps = trace.filter(s => s.step_type === 'tool_call');
+        if (provenance && provenance.steps) {
+            const toolSteps = provenance.steps.filter(s => s.step_type === 'tool_call');
             if (toolSteps.length > 0) {
                 html += '<div class="provenance-footer">';
                 for (const step of toolSteps) {
@@ -242,10 +229,10 @@ export default {
 
     async loadProviders() {
         try {
-            const providers = await this.api('GET', '/providers');
+            const providers = await this.api('GET', 'providers');
             if (providers.length > 0) {
                 const def = providers.find(p => p.is_default) || providers[0];
-                this.el.providerName.textContent = `${def.name} ${def.connected ? '✓' : '✗'}`;
+                this.el.providerName.textContent = `${def.name} ${def.connected ? '\u2713' : '\u2717'}`;
                 this.el.providerStatus.className = 'status-dot ' + (def.connected ? 'connected' : 'disconnected');
             }
         } catch (e) {
@@ -255,7 +242,7 @@ export default {
 
     async loadTools() {
         try {
-            const tools = await this.api('GET', '/tools');
+            const tools = await this.api('GET', 'tools');
             let html = '<h4>Available Tools</h4>';
             for (const tool of tools) {
                 html += `
@@ -272,7 +259,7 @@ export default {
 
     async loadConfig() {
         try {
-            const config = await this.api('GET', '/config');
+            const config = await this.api('GET', 'config');
             this.el.panelConfig.innerHTML = `<pre style="font-size:11px;">${this.esc(JSON.stringify(config, null, 2))}</pre>`;
         } catch (e) {
             this.el.panelConfig.innerHTML = '<p style="color:red;">Failed to load config</p>';
@@ -281,7 +268,7 @@ export default {
 
     async loadProvidersPanel() {
         try {
-            const providers = await this.api('GET', '/providers');
+            const providers = await this.api('GET', 'providers');
             let html = '<h4>Providers</h4>';
             for (const p of providers) {
                 html += `

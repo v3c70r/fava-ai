@@ -13,8 +13,8 @@ def list_conversations(db) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def create_conversation(db, title: str = "", provider: str = "", model: str = "") -> dict:
-    conv_id = str(uuid.uuid4())
+def create_conversation(db, title: str = "", provider: str = "", model: str = "", id: str = None) -> dict:
+    conv_id = id or str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat() + "Z"
     if not title:
         title = "New conversation"
