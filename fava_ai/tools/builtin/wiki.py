@@ -109,7 +109,60 @@ class WikiListTool(BaseTool):
         )
 
 
+class WikiWriteTool(BaseTool):
+    def __init__(self, wiki: WikiManager):
+        self._wiki = wiki
+
+    @property
+    def name(self) -> str:
+        return "wiki_write"
+
+    @property
+    def description(self) -> str:
+        return "Create or update a wiki page. Path is relative to the wiki root (e.g. 'notes/tax_2024.md')."
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path for the wiki page (e.g. 'notes/budget.md')",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content for the page",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Page title for frontmatter metadata",
+                },
+            },
+            "required": ["path", "content"],
+        }
+
+    @property
+    def permission(self) -> str:
+        return "write"
+
+    def execute(self, path: str, content: str, title: str = "") -> ToolResult:
+        metadata = {"title": title or path, "type": "note"}
+        try:
+            self._wiki.write(path, content, metadata)
+            return ToolResult(
+                content=f"Wiki page written: {path}",
+                metadata={"path": path, "title": title},
+            )
+        except ValueError as e:
+            return ToolResult(
+                content=f"Error writing wiki page: {e}",
+                metadata={"error": str(e), "path": path},
+            )
+
+
 def register_wiki_tools(registry, wiki: WikiManager):
     registry.register(WikiSearchTool(wiki))
     registry.register(WikiReadTool(wiki))
     registry.register(WikiListTool(wiki))
+    registry.register(WikiWriteTool(wiki))

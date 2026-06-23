@@ -78,3 +78,30 @@ def test_context_builder_no_wiki(sample_entries):
 
     prompt = cb.build_system_prompt("test")
     assert "Knowledge Base Context" not in prompt
+
+
+def test_context_builder_with_prompt_registry(sample_entries):
+    from tests.conftest import MockLedger
+    from fava_ai.tools.registry import ToolRegistry
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.agent.context import ContextBuilder
+    from fava_ai.prompts.registry import PromptRegistry
+
+    ledger = MockLedger(sample_entries, {"operating_currency": ["USD"]})
+    reg = ToolRegistry()
+    register_ledger_tools(reg, ledger)
+    pr = PromptRegistry()
+    cb = ContextBuilder(ledger, reg, prompt_registry=pr)
+
+    cb.set_prompt("monthly_review")
+    prompt = cb.build_system_prompt("test")
+    assert "financial review" in prompt.lower()
+
+    cb.set_prompt("investment_review")
+    prompt = cb.build_system_prompt("test")
+    assert "portfolio" in prompt.lower()
+
+    # Default prompt
+    cb.set_prompt("default")
+    prompt = cb.build_system_prompt("test")
+    assert "AI assistant" in prompt

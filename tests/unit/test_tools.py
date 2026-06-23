@@ -128,3 +128,47 @@ def test_registry_unregister():
 def test_base_tool_permission_default():
     tool = SlowTool()
     assert tool.permission == "readonly"
+
+
+def test_wiki_write_tool(tmp_path):
+    from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.wiki import WikiWriteTool
+
+    wiki = WikiManager(tmp_path / "wiki")
+    tool = WikiWriteTool(wiki)
+    assert tool.name == "wiki_write"
+    assert tool.permission == "write"
+
+    result = tool.execute(path="notes/test.md", content="# Test\nHello", title="Test")
+    assert "written" in result.content
+    assert wiki.exists("notes/test.md")
+
+    page = wiki.read("notes/test.md")
+    assert page.content == "# Test\nHello"
+    assert page.metadata["title"] == "Test"
+
+
+def test_wiki_write_rejects_traversal(tmp_path):
+    from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.wiki import WikiWriteTool
+
+    wiki = WikiManager(tmp_path / "wiki")
+    tool = WikiWriteTool(wiki)
+    result = tool.execute(path="../../evil.md", content="hack", title="X")
+    assert "Error" in result.content
+
+
+def test_wiki_tools_registration_count():
+    from fava_ai.tools.registry import ToolRegistry
+    from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.wiki import register_wiki_tools
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        wiki = WikiManager(Path(d))
+        reg = ToolRegistry()
+        register_wiki_tools(reg, wiki)
+        tools = reg.list_tools()
+        names = {t.name for t in tools}
+        assert names == {"wiki_search", "wiki_read", "wiki_list", "wiki_write"}
