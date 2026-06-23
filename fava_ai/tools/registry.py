@@ -1,7 +1,10 @@
 import json
+import logging
 import traceback
 
 from fava_ai.tools.base import BaseTool, ToolDefinition, ToolResult, ToolError
+
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
@@ -39,7 +42,8 @@ class ToolRegistry:
         except ToolError:
             raise
         except Exception as e:
+            logger.exception("Tool %s failed", name)
             raise ToolError(
-                f"Tool execution error: {e}\n{traceback.format_exc()}",
+                f"Tool execution error: {e}",
                 tool_name=name,
             )

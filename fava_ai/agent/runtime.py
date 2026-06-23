@@ -45,11 +45,13 @@ class AgentRuntime:
 
         tracker = ExecutionTracker()
 
+        # Always inject system prompt (it's never persisted to DB)
         if messages is None:
             messages = []
-            system_prompt = self._context_builder.build_system_prompt(user_message)
-            messages.append(Message(role="system", content=system_prompt))
+        system_prompt = self._context_builder.build_system_prompt(user_message)
+        messages.insert(0, Message(role="system", content=system_prompt))
 
+        existing_count = len(messages)
         messages.append(Message(role="user", content=user_message))
 
         tools = self._tool_registry.get_definitions()
@@ -104,6 +106,7 @@ class AgentRuntime:
                     "conversation_id": conversation_id,
                     "content": response.content,
                     "messages": messages,
+                    "new_messages": messages[existing_count:],
                     "usage": response.usage,
                     "provenance": tracker.to_dict(),
                     "provenance_summary": tracker.provenance_summary(),

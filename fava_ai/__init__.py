@@ -151,7 +151,8 @@ class FavaAI(FavaExtensionBase):
                         provider=provider, model=""
                     )
 
-                for msg in result["messages"]:
+                # Only save NEW messages (not re-loaded history)
+                for msg in result.get("new_messages", result["messages"]):
                     if msg.role != "system":
                         save_message(self._db, conv_id, msg)
 
@@ -398,9 +399,15 @@ class FavaAI(FavaExtensionBase):
 
     def after_load_file(self):
         """Fires on ledger load/reload. Rebuild knowledge base if changed."""
+        knowledge_config = self._config_manager.get_knowledge_config()
+        if not knowledge_config.get("auto_extract", True):
+            return
         if self._knowledge_engine and self._knowledge_engine.needs_rebuild(
             self.ledger.all_entries
         ):
-            self._knowledge_engine.extract_all(
-                self.ledger.all_entries, self.ledger.options
-            )
+            try:
+                self._knowledge_engine.extract_all(
+                    self.ledger.all_entries, self.ledger.options
+                )
+            except Exception:
+                pass

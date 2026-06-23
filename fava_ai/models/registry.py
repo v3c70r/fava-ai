@@ -10,6 +10,7 @@ class ProviderRegistry:
     def __init__(self, config_manager):
         self._config_manager = config_manager
         self._providers: dict[str, BaseProvider] = {}
+        self._connection_cache: dict[str, bool] = {}
         self._init_from_config()
 
     def _init_from_config(self):
@@ -62,10 +63,17 @@ class ProviderRegistry:
         default_name = bc.get("provider", "ollama")
         result = []
         for name, provider in self._providers.items():
+            connected = self._connection_cache.get(name)
+            if connected is None:
+                try:
+                    connected = provider.test_connection()
+                except Exception:
+                    connected = False
+                self._connection_cache[name] = connected
             result.append({
                 "name": name,
                 "is_default": name == default_name,
-                "connected": provider.test_connection(),
+                "connected": connected,
             })
         return result
 

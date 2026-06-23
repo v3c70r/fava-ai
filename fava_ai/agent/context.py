@@ -97,7 +97,7 @@ The following information was extracted from the wiki knowledge base:
 
     def _get_ledger_summary(self) -> str:
         entries = self._ledger.all_entries
-        txns = [e for e in entries if hasattr(e, 'date')]
+        txns = [e for e in entries if type(e).__name__ == "Transaction"]
         if txns:
             dates = [e.date for e in txns]
             date_range = f"{min(dates)} to {max(dates)}"

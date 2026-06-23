@@ -1,5 +1,4 @@
 import json
-from collections import defaultdict
 from datetime import date
 
 from fava_ai.tools.base import BaseTool, ToolResult
@@ -113,6 +112,8 @@ class ListAccountsTool(BaseTool):
         accounts = []
         for real_account in realization.iter_children(root):
             acct_name = real_account.account
+            if not acct_name:
+                continue
             if prefix and not acct_name.startswith(prefix):
                 continue
             balance = real_account.balance
@@ -274,7 +275,7 @@ class LedgerInfoTool(BaseTool):
         entries = self._ledger.all_entries
         options = self._ledger.options
 
-        txns = [e for e in entries if hasattr(e, 'date')]
+        txns = [e for e in entries if type(e).__name__ == "Transaction"]
         dates = [e.date for e in txns]
         date_range = f"{min(dates)} to {max(dates)}" if dates else "N/A"
 
