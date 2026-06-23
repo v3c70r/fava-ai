@@ -5,25 +5,29 @@ from datetime import datetime, timezone
 from fava_ai.models.base import Message
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def list_conversations(db) -> list[dict]:
-    rows = db.conn.execute(
+    rows = db.execute(
         "SELECT id, title, provider, model, created_at, updated_at "
         "FROM conversations ORDER BY updated_at DESC"
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def create_conversation(db, title: str = "", provider: str = "", model: str = "", id: str = None) -> dict:
+def create_conversation(db, title: str = "", provider: str = "", model: str = "", id: str | None = None) -> dict:
     conv_id = id or str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat() + "Z"
+    now = _now()
     if not title:
         title = "New conversation"
-    db.conn.execute(
+    db.execute(
         "INSERT INTO conversations (id, title, provider, model, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (conv_id, title, provider, model, now, now),
     )
-    db.conn.commit()
+    db.commit()
     return {
         "id": conv_id,
         "title": title,
@@ -35,13 +39,13 @@ def create_conversation(db, title: str = "", provider: str = "", model: str = ""
 
 
 def get_conversation(db, conv_id: str) -> dict | None:
-    row = db.conn.execute(
+    row = db.execute(
         "SELECT * FROM conversations WHERE id = ?", (conv_id,)
     ).fetchone()
     if not row:
         return None
 
-    messages = db.conn.execute(
+    messages = db.execute(
         "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
         (conv_id,),
     ).fetchall()
@@ -52,13 +56,13 @@ def get_conversation(db, conv_id: str) -> dict | None:
 
 
 def delete_conversation(db, conv_id: str):
-    db.conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
-    db.conn.commit()
+    db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+    db.commit()
 
 
-def save_message(db, conv_id: str, message: Message):
+def save_message(db, conv_id: str, message: Message) -> str:
     msg_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat() + "Z"
+    now = _now()
 
     tool_calls_json = None
     if message.tool_calls:
@@ -66,32 +70,24 @@ def save_message(db, conv_id: str, message: Message):
             [tc.to_dict() for tc in message.tool_calls], ensure_ascii=False
         )
 
-    db.conn.execute(
+    db.execute(
         "INSERT INTO messages (id, conversation_id, role, content, tool_calls, "
         "tool_call_id, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            msg_id,
-            conv_id,
-            message.role,
-            message.content,
-            tool_calls_json,
-            message.tool_call_id,
-            message.name,
-            now,
+            msg_id, conv_id, message.role, message.content,
+            tool_calls_json, message.tool_call_id, message.name, now,
         ),
     )
-
-    db.conn.execute(
+    db.execute(
         "UPDATE conversations SET updated_at = ? WHERE id = ?",
         (now, conv_id),
     )
-
-    db.conn.commit()
+    db.commit()
     return msg_id
 
 
 def load_messages(db, conv_id: str) -> list[Message]:
-    rows = db.conn.execute(
+    rows = db.execute(
         "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
         (conv_id,),
     ).fetchall()
@@ -107,6 +103,7 @@ def load_messages(db, conv_id: str) -> list[Message]:
                 tool_calls = [
                     ToolCall(
                         id=tc["id"],
+                        type=tc.get("type", "function"),
                         function=FunctionCall(
                             name=tc["function"]["name"],
                             arguments=tc["function"]["arguments"],
@@ -129,9 +126,9 @@ def load_messages(db, conv_id: str) -> list[Message]:
 
 
 def update_title(db, conv_id: str, title: str):
-    now = datetime.now(timezone.utc).isoformat() + "Z"
-    db.conn.execute(
+    now = _now()
+    db.execute(
         "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
         (title, now, conv_id),
     )
-    db.conn.commit()
+    db.commit()

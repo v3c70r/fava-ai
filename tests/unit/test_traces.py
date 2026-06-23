@@ -15,17 +15,17 @@ def db(tmp_path):
 
 def test_save_and_get_traces(db):
     # Create conversation first for FK constraint
-    db.conn.execute(
+    db.execute(
         "INSERT INTO conversations (id, provider, model) VALUES (?, ?, ?)",
         ("conv_1", "ollama", "llama3"),
     )
-    db.conn.commit()
+    db.commit()
 
-    db.conn.execute(
+    db.execute(
         "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)",
         ("msg_1", "conv_1", "user", "test"),
     )
-    db.conn.commit()
+    db.commit()
 
     steps = [
         {"step_index": 0, "step_type": "plan", "tool_name": None},
