@@ -1,8 +1,6 @@
 """Account graph extractor — generates wiki/accounts/*.md."""
 
-from collections import defaultdict
 from beancount.core import realization
-from beancount.core.inventory import Inventory
 
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
 
@@ -56,10 +54,6 @@ class AccountExtractor:
         for data in accounts_data:
             safe_name = data["name"].replace(":", "-")
             content = self._render_account(data, accounts_data)
-            depth = data["depth"]
-            subdir = accounts_dir
-            for _ in range(depth):
-                pass
 
             page_path = accounts_dir / f"{safe_name}.md"
             page = WikiPage(

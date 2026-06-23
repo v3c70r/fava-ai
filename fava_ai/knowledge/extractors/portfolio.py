@@ -26,7 +26,7 @@ class PortfolioExtractor:
             if not hasattr(entry, "postings"):
                 continue
             for p in entry.postings:
-                if p.units and p.account.startswith("Assets"):
+                if p.units and (p.account.startswith("Assets:") or p.account == "Assets"):
                     ccy = p.units.currency
                     c = commodities[ccy]
                     c["total_units"] += p.units.number

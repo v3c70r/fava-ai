@@ -35,10 +35,6 @@ class KnowledgeEngine:
         return old_hash != h
 
     def extract_all(self, entries, options) -> dict:
-        h = self._compute_hash(entries)
-        hash_file = self.wiki.wiki_dir / ".entries_hash"
-        hash_file.write_text(h)
-
         self._init_agents_md(options)
         self.wiki.append_log("extraction_start", {"entries": len(entries)})
 
@@ -52,6 +48,11 @@ class KnowledgeEngine:
 
         self._generate_overview(entries, options)
         self.wiki.append_log("extraction_complete", total_stats)
+
+        # Write hash AFTER successful extraction
+        h = self._compute_hash(entries)
+        hash_file = self.wiki.wiki_dir / ".entries_hash"
+        hash_file.write_text(h)
         return total_stats
 
     def _init_agents_md(self, options):
@@ -71,7 +72,7 @@ class KnowledgeEngine:
             )
 
     def _generate_overview(self, entries, options):
-        txns = [e for e in entries if hasattr(e, "date")]
+        txns = [e for e in entries if type(e).__name__ == "Transaction"]
         dates = [e.date for e in txns] if txns else []
         date_range = f"{min(dates)} to {max(dates)}" if dates else "N/A"
 
@@ -119,4 +120,12 @@ class KnowledgeEngine:
                 h.update(str(e.date).encode())
             if hasattr(e, "payee") and e.payee:
                 h.update(str(e.payee).encode())
+            if hasattr(e, "narration") and e.narration:
+                h.update(str(e.narration).encode())
+            if hasattr(e, "postings"):
+                for p in e.postings:
+                    h.update(p.account.encode())
+                    if p.units:
+                        h.update(str(p.units.number).encode())
+                        h.update(str(p.units.currency).encode())
         return h.hexdigest()

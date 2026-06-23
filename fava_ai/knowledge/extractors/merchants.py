@@ -40,7 +40,7 @@ class MerchantExtractor:
 
             if hasattr(entry, "postings"):
                 for p in entry.postings:
-                    if p.units:
+                    if p.units and p.account.startswith("Expenses"):
                         m["total_spent"][p.units.currency] += p.units.number
                         m["accounts"].add(p.account)
 
@@ -53,7 +53,8 @@ class MerchantExtractor:
 
             total = data["total_spent"].get(main_currency, Decimal("0"))
             if total == 0 and data["total_spent"]:
-                total = sum(data["total_spent"].values(), Decimal("0"))
+                # Pick the first currency rather than summing across currencies
+                total = list(data["total_spent"].values())[0]
 
             safe_name = self._slugify(payee)
             content = self._render_merchant(payee, data, main_currency)
@@ -82,7 +83,7 @@ class MerchantExtractor:
         txns = data["transactions"]
         total = data["total_spent"].get(currency, Decimal("0"))
         if total == 0 and data["total_spent"]:
-            total = sum(data["total_spent"].values(), Decimal("0"))
+            total = list(data["total_spent"].values())[0]
 
         lines = [
             f"# {payee}",

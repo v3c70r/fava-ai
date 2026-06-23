@@ -1,14 +1,14 @@
 """WikiManager — read/write/search markdown wiki pages with YAML frontmatter."""
 
-import os
 import re
+import shutil
 import yaml
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 
-FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+_META_FILES = {"index.md", "AGENTS.md", "log.md"}
 
 
 class WikiPage:
@@ -47,19 +47,30 @@ class WikiManager:
         self.wiki_dir = Path(wiki_dir)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
 
+    def _safe_path(self, rel_path: str) -> Path:
+        """Resolve rel_path and ensure it stays inside wiki_dir."""
+        base = self.wiki_dir.resolve()
+        target = (base / rel_path).resolve()
+        if target != base and base not in target.parents:
+            raise ValueError(f"Path escapes wiki directory: {rel_path}")
+        return target
+
     # ── Read ──────────────────────────────────────────────────────
 
     def read(self, rel_path: str) -> WikiPage:
-        path = self.wiki_dir / rel_path
+        path = self._safe_path(rel_path)
         return WikiPage.from_file(path)
 
     def exists(self, rel_path: str) -> bool:
-        return (self.wiki_dir / rel_path).exists()
+        try:
+            return self._safe_path(rel_path).exists()
+        except ValueError:
+            return False
 
     # ── Write ─────────────────────────────────────────────────────
 
     def write(self, rel_path: str, content: str, metadata: dict | None = None):
-        path = self.wiki_dir / rel_path
+        path = self._safe_path(rel_path)
         page = WikiPage(path, metadata, content)
         page.save()
         self._update_index()
@@ -72,22 +83,17 @@ class WikiManager:
 
     def search(self, query: str, max_results: int = 20) -> list[dict]:
         query_lower = query.lower()
-        # Split into words for better matching; also keep full query for exact match
         query_words = set(query_lower.split())
         results = []
-        for md_file in self.wiki_dir.rglob("*.md"):
-            if md_file.name.startswith("_"):
+        for md_file in sorted(self.wiki_dir.rglob("*.md")):
+            if md_file.name in _META_FILES or md_file.name.startswith("_"):
                 continue
             try:
                 text = md_file.read_text(encoding="utf-8")
                 text_lower = text.lower()
-                # Match if full query or any significant word is in the text
                 match = query_lower in text_lower
                 if not match:
-                    match = any(
-                        len(w) > 2 and w in text_lower
-                        for w in query_words
-                    )
+                    match = any(len(w) > 2 and w in text_lower for w in query_words)
                 if match:
                     rel = str(md_file.relative_to(self.wiki_dir))
                     page = WikiPage.from_file(md_file)
@@ -105,7 +111,6 @@ class WikiManager:
 
     def _snippet(self, text: str, query_words: set, context: int = 120) -> str:
         text_lower = text.lower()
-        # Find first matching word position
         best_pos = len(text)
         for w in query_words:
             if len(w) > 2:
@@ -126,6 +131,8 @@ class WikiManager:
             return []
         results = []
         for md_file in sorted(base.rglob("*.md")):
+            if md_file.name in _META_FILES:
+                continue
             rel = str(md_file.relative_to(self.wiki_dir))
             page = WikiPage.from_file(md_file)
             results.append({
@@ -142,7 +149,7 @@ class WikiManager:
     def _update_index(self):
         pages = []
         for md_file in sorted(self.wiki_dir.rglob("*.md")):
-            if md_file.name in ("index.md", "AGENTS.md", "log.md"):
+            if md_file.name in _META_FILES:
                 continue
             rel = str(md_file.relative_to(self.wiki_dir))
             page = WikiPage.from_file(md_file)
@@ -156,7 +163,7 @@ class WikiManager:
             "---",
             "title: Wiki Index",
             "type: index",
-            f"updated: {datetime.now().isoformat()[:19]}",
+            f"updated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}",
             "---",
             "",
             "# Wiki Index",
@@ -181,7 +188,7 @@ class WikiManager:
 
     def append_log(self, event: str, details: dict | None = None):
         log_file = self.wiki_dir / "log.md"
-        timestamp = datetime.now().isoformat()[:19]
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
         detail_str = ""
         if details:
             detail_str = " | " + yaml.dump(details, allow_unicode=True, default_flow_style=True).strip()
@@ -197,8 +204,7 @@ class WikiManager:
     # ── Clean ─────────────────────────────────────────────────────
 
     def delete_dir(self, rel_path: str):
-        dir_path = self.wiki_dir / rel_path
-        if dir_path.exists():
-            import shutil
+        dir_path = self._safe_path(rel_path)
+        if dir_path.exists() and dir_path.is_dir():
             shutil.rmtree(dir_path)
             self._update_index()

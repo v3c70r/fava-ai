@@ -1,7 +1,6 @@
 """Recurring transaction detector — generates wiki/recurring/*.md."""
 
 from collections import defaultdict
-from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
