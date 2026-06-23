@@ -59,12 +59,18 @@ class AgentRuntime:
         start_time = time.time()
 
         for iteration in range(self._limits.max_iterations):
-            if time.time() - start_time > self._limits.timeout_seconds:
+            elapsed = time.time() - start_time
+            remaining = self._limits.timeout_seconds - elapsed
+            if remaining <= 0:
                 raise LimitExceeded("timeout")
 
             tracker.record_plan(iteration)
 
-            response = provider.chat(messages, tools=tools)
+            try:
+                response = provider.chat(messages, tools=tools, timeout=remaining)
+            except TypeError:
+                # Provider doesn't accept timeout kwarg
+                response = provider.chat(messages, tools=tools)
 
             if response.has_tool_calls():
                 messages.append(response.as_message())

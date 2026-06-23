@@ -2,18 +2,31 @@ from fava_ai.tools.registry import ToolRegistry
 
 
 class ContextBuilder:
-    def __init__(self, ledger, tool_registry: ToolRegistry, wiki_manager=None):
+    def __init__(self, ledger, tool_registry: ToolRegistry, wiki_manager=None, prompt_registry=None):
         self._ledger = ledger
         self._tool_registry = tool_registry
         self._wiki = wiki_manager
+        self._prompt_registry = prompt_registry
+        self._prompt_id = "default"
+
+    def set_prompt(self, prompt_id: str):
+        self._prompt_id = prompt_id
 
     def build_system_prompt(self, user_message: str | None = None) -> str:
         tools_desc = self._build_tools_description()
         ledger_info = self._get_ledger_summary()
         kb_context = self._get_kb_context(user_message) if user_message and self._wiki else ""
 
-        prompt = f"""You are an AI assistant for a Beancount/Fava personal finance ledger.
-Your role is to help the user understand and analyze their financial data.
+        base_prompt = ""
+        if self._prompt_registry:
+            base_prompt = self._prompt_registry.get_system_prompt(self._prompt_id)
+        if not base_prompt:
+            base_prompt = (
+                "You are an AI assistant for a Beancount/Fava personal finance ledger.\n"
+                "Your role is to help the user understand and analyze their financial data."
+            )
+
+        prompt = f"""{base_prompt}
 
 ## Ledger Summary
 {ledger_info}

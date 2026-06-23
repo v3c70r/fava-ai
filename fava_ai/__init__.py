@@ -81,7 +81,8 @@ class FavaAI(FavaExtensionBase):
         from fava_ai.agent.context import ContextBuilder
 
         context_builder = ContextBuilder(
-            self.ledger, self._tool_registry, self._wiki_manager
+            self.ledger, self._tool_registry, self._wiki_manager,
+            self._prompt_registry,
         )
 
         self._agent_runtime = AgentRuntime(
