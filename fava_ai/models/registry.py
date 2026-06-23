@@ -5,7 +5,6 @@ from fava_ai.models.anthropic import AnthropicProvider
 from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.models.openai_compat import OpenAICompatProvider
 
-
 class ProviderRegistry:
     def __init__(self, config_manager):
         self._config_manager = config_manager
