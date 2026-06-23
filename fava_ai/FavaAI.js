@@ -38,12 +38,7 @@ export default {
         });
         this.el.newConvBtn.addEventListener('click', () => this.newConversation());
 
-        document.querySelectorAll('.fava-ai-welcome li').forEach(li => {
-            li.addEventListener('click', () => {
-                this.el.input.value = li.textContent;
-                this.sendMessage();
-            });
-        });
+        this.bindWelcomeLinks();
 
         this.el.panelTabs.forEach(tab => {
             tab.addEventListener('click', () => {
@@ -56,6 +51,15 @@ export default {
                 if (tab.dataset.tab === 'tools') this.loadTools();
                 if (tab.dataset.tab === 'config') this.loadConfig();
                 if (tab.dataset.tab === 'providers') this.loadProvidersPanel();
+            });
+        });
+    },
+
+    bindWelcomeLinks() {
+        document.querySelectorAll('.fava-ai-welcome li').forEach(li => {
+            li.addEventListener('click', () => {
+                this.el.input.value = li.textContent;
+                this.sendMessage();
             });
         });
     },
@@ -118,6 +122,7 @@ export default {
                 </ul>
             </div>`;
         this.renderConvList();
+        this.bindWelcomeLinks();
         this.el.input.focus();
     },
 
