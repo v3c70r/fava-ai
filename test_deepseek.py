@@ -1,6 +1,14 @@
-"""Test the Fava AI agent with DeepSeek API against beancount fixtures."""
+"""Test the Fava AI agent with DeepSeek API against beancount fixtures.
+
+Requires DEEPSEEK_API_KEY environment variable.
+Usage: python3 test_deepseek.py
+"""
 import sys
 import os
+
+if not os.environ.get("DEEPSEEK_API_KEY"):
+    print("Error: set DEEPSEEK_API_KEY env var first")
+    sys.exit(1)
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -29,11 +37,11 @@ ledger = MockLedger()
 from fava_ai.config import ConfigManager
 from fava_ai.storage.database import Database
 from fava_ai.models.registry import ProviderRegistry
+from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.tools.registry import ToolRegistry
 from fava_ai.tools.builtin.ledger import register_ledger_tools
 from fava_ai.agent.runtime import AgentRuntime
 from fava_ai.agent.context import ContextBuilder
-from fava_ai.models.deepseek import DeepSeekProvider
 
 config_dir = Path("/tmp/fava-ai-test")
 config_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +50,7 @@ import yaml
 config_yaml = {
     "providers": {
         "deepseek": {
-            "api_key": "sk-ab94f22f6016438c9972e3a6ae6a7b5f",
+            "api_key": os.environ["DEEPSEEK_API_KEY"],
             "model": "deepseek-chat",
         }
     }
@@ -61,17 +69,13 @@ provider_registry = ProviderRegistry(config_manager)
 provider_registry.register(
     "deepseek",
     DeepSeekProvider(
-        api_key="sk-ab94f22f6016438c9972e3a6ae6a7b5f",
+        api_key=os.environ["DEEPSEEK_API_KEY"],
         model="deepseek-chat",
     ),
 )
 
 tool_registry = ToolRegistry()
 register_ledger_tools(tool_registry, ledger)
-
-print(f"\nRegistered {len(tool_registry.list_tools())} tools:")
-for tool in tool_registry.list_tools():
-    print(f"  - {tool.name}")
 
 context_builder = ContextBuilder(ledger, tool_registry)
 
@@ -99,17 +103,12 @@ for question in test_questions:
             user_message=question,
             provider_name="deepseek",
         )
-        print(f"<<< Assistant: {result['content']}")
+        print(f"<<< Assistant: {result['content'][:200]}")
         tc_count = result.get("tool_call_count", 0)
-        trace = result.get("trace", [])
-        print(f"  (Tool calls: {tc_count}, steps: {len(trace)})")
-        for step in trace:
-            if step.get("step_type") == "tool_call":
-                print(f"    → Tool: {step.get('tool_name')} ({step.get('tool_input', '')})")
+        prov = result.get("provenance", {})
+        print(f"  (Tool calls: {tc_count}, steps: {prov.get('total_steps', 0)})")
     except Exception as e:
         print(f"<<< Error: {e}")
-        import traceback
-        traceback.print_exc()
 
 db.close()
 print("\nDone!")

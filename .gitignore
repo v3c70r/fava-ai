@@ -3,3 +3,5 @@ __pycache__/
 .fava-ai/conversations.db
 *.pyc
 fava_ai.egg-info/
+test_deepseek.py
+tests/fixtures/ledgers/.fava-ai/
