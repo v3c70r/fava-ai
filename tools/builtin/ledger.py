@@ -2,7 +2,10 @@ import json
 from datetime import date
 
 from fava_ai.tools.base import BaseTool, ToolResult
-from beancount.query import query as bql_query
+try:
+    from beanquery import query as bql_query
+except ImportError:
+    from beancount.query import query as bql_query
 from beancount.core import realization
 from beancount.core.inventory import Inventory
 from beancount.core.amount import Amount
