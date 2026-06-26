@@ -1,0 +1,9 @@
+providers:
+  deepseek:
+    api_key: sk-ab94f22f6016438c9972e3a6ae6a7b5f
+    model: deepseek-chat
+agent:
+  max_iterations: 10
+  max_tool_calls: 20
+knowledge:
+  auto_extract: true

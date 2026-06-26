@@ -14,5 +14,21 @@ dependencies = [
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-include = ["fava_ai*"]
+[tool.setuptools]
+package-dir = {"fava_ai" = "."}
+packages = [
+    "fava_ai",
+    "fava_ai.agent",
+    "fava_ai.models",
+    "fava_ai.tools",
+    "fava_ai.tools.builtin",
+    "fava_ai.knowledge",
+    "fava_ai.knowledge.extractors",
+    "fava_ai.prompts",
+    "fava_ai.prompts.builtin",
+    "fava_ai.provenance",
+    "fava_ai.storage",
+]
+
+[tool.setuptools.package-data]
+fava_ai = ["templates/*.html", "FavaAI.js"]

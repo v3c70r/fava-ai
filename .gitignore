@@ -2,3 +2,4 @@ __pycache__/
 .fava-ai/config.yaml
 .fava-ai/conversations.db
 *.pyc
+fava_ai.egg-info/
