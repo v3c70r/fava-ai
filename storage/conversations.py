@@ -38,20 +38,33 @@ def create_conversation(db, title: str = "", provider: str = "", model: str = ""
     }
 
 
-def get_conversation(db, conv_id: str) -> dict | None:
+def get_conversation(db, conv_id: str, message_limit: int | None = None,
+                     message_offset: int = 0) -> dict | None:
     row = db.execute(
         "SELECT * FROM conversations WHERE id = ?", (conv_id,)
     ).fetchone()
     if not row:
         return None
 
-    messages = db.execute(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, seq",
+    total_messages = db.execute(
+        "SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?",
         (conv_id,),
-    ).fetchall()
+    ).fetchone()["n"]
+
+    query = (
+        "SELECT * FROM messages WHERE conversation_id = ? "
+        "ORDER BY created_at, seq"
+    )
+    params: list = [conv_id]
+    if message_limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params += [message_limit, message_offset]
+
+    messages = db.execute(query, tuple(params)).fetchall()
 
     conv = dict(row)
     conv["messages"] = [dict(m) for m in messages]
+    conv["message_count"] = total_messages
     return conv
 
 

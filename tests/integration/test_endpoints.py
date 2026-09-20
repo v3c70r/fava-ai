@@ -46,6 +46,35 @@ def test_chat_requires_message(client, ext):
     assert resp.status_code == 400
 
 
+def test_chat_passes_provider_model_and_prompt(client, ext):
+    stub = StubRuntime(make_result())
+    ext._agent_runtime = stub
+
+    resp = client.post("/chat", json={
+        "message": "hi",
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt_id": "monthly_review",
+    })
+    assert resp.status_code == 200
+    call = stub.calls[-1]
+    assert call["provider_name"] == "openai"
+    assert call["model"] == "gpt-4o-mini"
+    assert call["prompt_id"] == "monthly_review"
+
+
+def test_chat_stream_passes_model_and_prompt(client, ext):
+    stub = StubRuntime(make_result())
+    ext._agent_runtime = stub
+
+    client.post("/chat_stream", json={
+        "message": "hi", "model": "gpt-4o", "prompt_id": "investment_review",
+    })
+    call = stub.calls[-1]
+    assert call["model"] == "gpt-4o"
+    assert call["prompt_id"] == "investment_review"
+
+
 @pytest.mark.parametrize(
     "error_name,expected_status",
     [
@@ -75,10 +104,14 @@ def test_chat_stream_emits_frames_and_persists(client, ext):
 
     frames = _parse_sse(resp.get_data(as_text=True))
     types = [f["type"] for f in frames]
-    assert "content" in types
+    assert "content_delta" in types
     assert "tool_call" in types
     assert types[-1] == "done"
     assert frames[-1]["message_id"]
+    assert frames[-1]["content"] == "The answer is 42."
+    # Token deltas reconstruct the final answer.
+    deltas = "".join(f["content"] for f in frames if f["type"] == "content_delta")
+    assert deltas == "The answer is 42."
 
 
 def test_chat_stream_error_frame(client, ext):
@@ -119,6 +152,37 @@ def test_create_conversation_duplicate_id_returns_409(client, ext):
 
 def test_delete_missing_conversation_returns_404(client, ext):
     assert client.delete("/conversations?id=nope").status_code == 404
+
+
+def test_rename_conversation(client, ext):
+    conv = client.post("/conversations", json={"title": "Old"}).get_json()
+
+    resp = client.put("/conversations", json={"id": conv["id"], "title": "New"})
+    assert resp.status_code == 200
+    assert resp.get_json()["title"] == "New"
+
+    # Rename via query param too.
+    resp = client.put(f"/conversations?id={conv['id']}", json={"title": "Newest"})
+    assert resp.get_json()["title"] == "Newest"
+
+    assert client.put("/conversations", json={"id": "nope", "title": "x"}).status_code == 404
+    assert client.put("/conversations", json={"id": conv["id"]}).status_code == 400
+
+
+def test_message_pagination(client, ext):
+    from fava_ai.models.base import Message
+    from fava_ai.storage.conversations import save_message
+
+    conv = client.post("/conversations", json={"title": "T"}).get_json()
+    for i in range(10):
+        save_message(ext.db, conv["id"], Message(role="user", content=f"m{i}"))
+
+    page = client.get(f"/conversations?id={conv['id']}&limit=3&offset=2").get_json()
+    assert [m["content"] for m in page["messages"]] == ["m2", "m3", "m4"]
+    assert page["message_count"] == 10
+
+    full = client.get(f"/conversations?id={conv['id']}").get_json()
+    assert len(full["messages"]) == 10
 
 
 # ── config ────────────────────────────────────────────────────────

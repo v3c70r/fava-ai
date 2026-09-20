@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Real token streaming: `AgentRuntime.run_stream` drives litellm's streaming API,
+  reassembles fragmented tool calls, and emits `content_delta` / `tool_call` / `done`
+  SSE events. The UI renders tokens live with a Stop button.
+- Provider, model and system-prompt selection in the UI, persisted per conversation.
+- Conversation rename (double-click a title) and markdown export.
+- Message pagination for `GET /conversations` (`?limit=&offset=`).
 - CI workflow (GitHub Actions): ruff lint, mypy, pytest with coverage on Python 3.10–3.12.
 - `dev` optional dependency group (`pip install -e ".[dev]"` now works).
 - `LICENSE` (MIT) and `CHANGELOG.md`.
@@ -29,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BQL result values are converted defensively, fixing `Decimal` serialisation errors.
 
 ### Changed
+- The chat UI now consumes the streaming endpoint, renders live tool-call chips, uses a
+  dependency-free markdown renderer (tables, lists, code blocks, links), and lifts
+  `prompt_id`/`model` through to the runtime.
 - Provenance is now persisted: chat responses include a `message_id`, traces are saved,
   and the UI restores tool-call provenance when a conversation is reloaded.
 - Final assistant answers are now stored in conversation history (previously dropped).

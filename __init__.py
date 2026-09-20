@@ -121,7 +121,7 @@ class FavaAI(FavaExtensionBase):
 
     # ── API Endpoints ──────────────────────────────────────────────
 
-    def _persist_exchange(self, result, conversation_id, provider_name, user_message):
+    def _persist_exchange(self, result, conversation_id, provider_name, user_message, model=None):
         """Persist new messages and provenance for a completed agent run.
 
         Returns the id of the final assistant message (or None). Shared by the
@@ -144,7 +144,7 @@ class FavaAI(FavaExtensionBase):
             try:
                 create_conversation(
                     self._db, id=conv_id, title=user_message[:80],
-                    provider=provider, model="",
+                    provider=provider, model=model or "",
                 )
             except Exception:
                 # Conversation already exists (retry / duplicate id): continue.
@@ -186,17 +186,21 @@ class FavaAI(FavaExtensionBase):
                 messages = load_messages(self._db, conversation_id)
 
             provider_name = data.get("provider")
+            model = data.get("model")
+            prompt_id = data.get("prompt_id")
 
             result = self._agent_runtime.run(
                 user_message=user_message,
                 conversation_id=conversation_id,
                 messages=messages,
                 provider_name=provider_name,
+                model=model,
+                prompt_id=prompt_id,
             )
 
             conv_id = result["conversation_id"]
             message_id = self._persist_exchange(
-                result, conversation_id, provider_name, user_message
+                result, conversation_id, provider_name, user_message, model
             )
 
             return jsonify({
@@ -232,21 +236,30 @@ class FavaAI(FavaExtensionBase):
                     from fava_ai.storage.conversations import load_messages
                     messages = load_messages(self._db, conversation_id)
                 provider_name = data.get("provider")
+                model = data.get("model")
+                prompt_id = data.get("prompt_id")
 
-                result = self._agent_runtime.run(
+                for event in self._agent_runtime.run_stream(
                     user_message=user_message, conversation_id=conversation_id,
                     messages=messages, provider_name=provider_name,
-                )
-
-                message_id = self._persist_exchange(
-                    result, conversation_id, provider_name, user_message
-                )
-
-                yield f"data: {json.dumps({'type': 'content', 'content': result['content'], 'conversation_id': result['conversation_id'], 'message_id': message_id})}\n\n"
-                for step in result.get("provenance", {}).get("steps", []):
-                    if step.get("step_type") == "tool_call":
-                        yield f"data: {json.dumps({'type': 'tool_call', 'step': step})}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'message_id': message_id, 'usage': result.get('usage'), 'provenance_summary': result.get('provenance_summary', '')})}\n\n"
+                    model=model, prompt_id=prompt_id,
+                ):
+                    if event["type"] == "done":
+                        result = event["result"]
+                        message_id = self._persist_exchange(
+                            result, conversation_id, provider_name,
+                            user_message, model,
+                        )
+                        payload = {
+                            "type": "done",
+                            "conversation_id": result["conversation_id"],
+                            "message_id": message_id,
+                            "content": result["content"],
+                            "provenance_summary": result["provenance_summary"],
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    else:
+                        yield f"data: {json.dumps(event)}\n\n"
 
             except AgentError as e:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'error_type': type(e).__name__})}\n\n"
@@ -267,11 +280,33 @@ class FavaAI(FavaExtensionBase):
         conv_id = request.args.get("id")
         from fava_ai.storage.conversations import get_conversation, list_conversations
         if conv_id:
-            conv = get_conversation(self._db, conv_id)
+            limit = request.args.get("limit", type=int)
+            offset = request.args.get("offset", type=int) or 0
+            conv = get_conversation(
+                self._db, conv_id, message_limit=limit, message_offset=offset
+            )
             if not conv:
                 return jsonify({"error": "Not found"}), 404
             return jsonify(conv)
         return jsonify(list_conversations(self._db))
+
+    @extension_endpoint("conversations", methods=["PUT"])
+    def api_update_conversation(self):
+        if not self._db:
+            return jsonify({"error": "No database"}), 500
+        data = request.get_json() or {}
+        conv_id = request.args.get("id") or data.get("id")
+        if not conv_id:
+            return jsonify({"error": "?id= required"}), 400
+        title = data.get("title")
+        if title is None or not isinstance(title, str):
+            return jsonify({"error": "title (string) is required"}), 400
+
+        from fava_ai.storage.conversations import get_conversation, update_title
+        if not get_conversation(self._db, conv_id):
+            return jsonify({"error": "Not found"}), 404
+        update_title(self._db, conv_id, title)
+        return jsonify(get_conversation(self._db, conv_id))
 
     @extension_endpoint("conversations", methods=["POST"])
     def api_create_conversation(self):

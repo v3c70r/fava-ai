@@ -12,14 +12,15 @@ class ContextBuilder:
     def set_prompt(self, prompt_id: str):
         self._prompt_id = prompt_id
 
-    def build_system_prompt(self, user_message: str | None = None) -> str:
+    def build_system_prompt(self, user_message: str | None = None, prompt_id: str | None = None) -> str:
         tools_desc = self._build_tools_description()
         ledger_info = self._get_ledger_summary()
         kb_context = self._get_kb_context(user_message) if user_message and self._wiki else ""
 
+        effective_prompt_id = prompt_id or self._prompt_id
         base_prompt = ""
         if self._prompt_registry:
-            base_prompt = self._prompt_registry.get_system_prompt(self._prompt_id)
+            base_prompt = self._prompt_registry.get_system_prompt(effective_prompt_id)
         if not base_prompt:
             base_prompt = (
                 "You are an AI assistant for a Beancount/Fava personal finance ledger.\n"
