@@ -1,10 +1,12 @@
 """External tool plugin loader — discovers and loads tools from .fava-ai/tools/."""
 
 import importlib.util
-import sys
+import logging
 from pathlib import Path
 
 from fava_ai.tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 def load_external_tools(tools_dir: Path) -> list[BaseTool]:
@@ -33,8 +35,6 @@ def load_external_tools(tools_dir: Path) -> list[BaseTool]:
     if not tools_dir.exists():
         return tools
 
-    sys.path.insert(0, str(tools_dir.parent))
-
     for py_file in sorted(tools_dir.glob("*.py")):
         if py_file.name.startswith("_"):
             continue
@@ -53,8 +53,8 @@ def load_external_tools(tools_dir: Path) -> list[BaseTool]:
                     if isinstance(tool, BaseTool):
                         tools.append(tool)
 
-        except Exception as e:
-            # Log load error but don't crash
-            print(f"[fava_ai] Failed to load tool plugin {py_file}: {e}", file=sys.stderr)
+        except Exception:
+            # Log the load error but don't crash Fava.
+            logger.exception("Failed to load tool plugin %s", py_file)
 
     return tools

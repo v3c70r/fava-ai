@@ -117,6 +117,21 @@ def test_run_bql_invalid_syntax(mock_ledger):
     assert "BQL Error" in result.content
 
 
+def test_run_bql_output_is_capped():
+    from tests.conftest import MockLedger, load_fixture
+    entries, _, options = load_fixture("beancount-example")
+    ledger = MockLedger(entries, options)
+    tool = RunBQLTool(ledger)
+    result = tool.execute(
+        query="SELECT date, account, position WHERE account ~ 'Expenses'"
+    )
+    data = json.loads(result.content)
+    assert data["truncated"] is True
+    assert data["row_count"] <= 200
+    assert data["total_rows"] > data["row_count"]
+    assert result.metadata["truncated"] is True
+
+
 def test_ledger_tools_registration():
     from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.tools.registry import ToolRegistry

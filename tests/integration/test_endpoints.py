@@ -162,6 +162,33 @@ def test_put_config_rejects_non_object(client, ext):
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"evil_top_level": 1},
+        {"providers": {"not-a-provider": {}}},
+        {"providers": {"openai": {"shell": "rm -rf /"}}},
+        {"agent": {"max_iterations": "lots"}},
+        {"knowledge": {"auto_extract": "yes"}},
+    ],
+)
+def test_put_config_rejects_invalid_documents(client, ext, payload):
+    resp = client.put("/config", json=payload)
+    assert resp.status_code == 400
+    assert "details" in resp.get_json()
+
+
+def test_put_config_invalid_document_does_not_write(client, ext):
+    config_path = ext.config_dir / "config.yaml"
+    config_path.write_text("providers:\n  openai:\n    model: gpt-4o\n")
+    ext._config_manager._load_yaml()
+
+    resp = client.put("/config", json={"bogus": True})
+    assert resp.status_code == 400
+    # File is untouched.
+    assert "openai" in config_path.read_text()
+
+
 # ── tools / prompts / knowledge ───────────────────────────────────
 
 

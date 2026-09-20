@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Endpoint-level (Flask test client) test layer under `tests/integration/`.
 - Agent error taxonomy (`agent/errors.py`): `NoProviderError`, `ProviderError`,
   `EmptyResponseError`, `ToolLoopError`, `LimitExceeded`, mapped to HTTP status codes.
+- `docs/SECURITY.md` documenting the threat model and controls.
+
+### Security
+- `PUT /config` now validates the document against a strict allow-list and refuses
+  unknown keys/provider names/types, leaving the file untouched on failure.
+- Loading external tool plugins from `.fava-ai/tools/` is opt-in
+  (`tools.external_enabled`, default `false`) and no longer mutates `sys.path`.
+- `wiki_write` refuses to overwrite auto-generated knowledge-base pages unless
+  `overwrite=true` is passed.
+- Tool output is size-capped to protect the model context window.
+- BQL result values are converted defensively, fixing `Decimal` serialisation errors.
 
 ### Changed
 - Provenance is now persisted: chat responses include a `message_id`, traces are saved,
