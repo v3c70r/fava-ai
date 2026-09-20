@@ -110,3 +110,32 @@ def test_provider_registry_list():
     assert len(providers) == 1
     assert providers[0]["name"] == "ollama"
     assert providers[0]["is_default"] is True
+
+
+def test_provider_registry_empty_returns_none(tmp_dir):
+    """No configured provider must yield None, not a silent Ollama fallback."""
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {}, tmp_dir)
+    reg = ProviderRegistry(cm)
+    assert reg.get_default() is None
+    assert reg.list_providers() == []
+
+
+def test_provider_registry_connection_cache_invalidate():
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {}, __import__("pathlib").Path("/tmp"))
+    reg = ProviderRegistry(cm)
+    reg.set_connection("a", True)
+    reg.set_connection("b", False)
+    assert reg._connection_cache == {"a": True, "b": False}
+
+    reg.invalidate("a")
+    assert "a" not in reg._connection_cache
+    assert "b" in reg._connection_cache
+
+    reg.invalidate()
+    assert reg._connection_cache == {}

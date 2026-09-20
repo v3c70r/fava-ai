@@ -265,5 +265,9 @@ def test_agent_no_provider():
             context_builder=cb,
         )
 
-        with pytest.raises(RuntimeError, match="No provider"):
+        from fava_ai.agent.errors import NoProviderError
+        with pytest.raises(NoProviderError, match="No LLM provider"):
             agent.run("test")
+
+        with pytest.raises(NoProviderError, match="Unknown provider"):
+            agent.run("test", provider_name="does-not-exist")

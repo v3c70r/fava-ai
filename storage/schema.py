@@ -1,4 +1,4 @@
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -63,6 +63,25 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 """
 
+MIGRATION_2 = """
+-- Monotonic per-conversation sequence number. `created_at` has second
+-- granularity, so rapidly saved messages (tool-call turns) could be
+-- reordered on reload without this.
+ALTER TABLE messages ADD COLUMN seq INTEGER;
+
+UPDATE messages SET seq = (
+    SELECT COUNT(*)
+    FROM messages AS m2
+    WHERE m2.conversation_id = messages.conversation_id
+      AND (m2.created_at < messages.created_at
+           OR (m2.created_at = messages.created_at AND m2.rowid <= messages.rowid))
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_seq
+    ON messages(conversation_id, seq);
+"""
+
 MIGRATIONS = {
     1: DDL,
+    2: MIGRATION_2,
 }

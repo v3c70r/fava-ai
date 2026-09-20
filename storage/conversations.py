@@ -46,7 +46,7 @@ def get_conversation(db, conv_id: str) -> dict | None:
         return None
 
     messages = db.execute(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
+        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, seq",
         (conv_id,),
     ).fetchall()
 
@@ -72,10 +72,12 @@ def save_message(db, conv_id: str, message: Message) -> str:
 
     db.execute(
         "INSERT INTO messages (id, conversation_id, role, content, tool_calls, "
-        "tool_call_id, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "tool_call_id, name, created_at, seq) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, "
+        "(SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE conversation_id = ?))",
         (
             msg_id, conv_id, message.role, message.content,
-            tool_calls_json, message.tool_call_id, message.name, now,
+            tool_calls_json, message.tool_call_id, message.name, now, conv_id,
         ),
     )
     db.execute(
@@ -88,7 +90,7 @@ def save_message(db, conv_id: str, message: Message) -> str:
 
 def load_messages(db, conv_id: str) -> list[Message]:
     rows = db.execute(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at",
+        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, seq",
         (conv_id,),
     ).fetchall()
 

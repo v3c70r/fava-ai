@@ -66,3 +66,29 @@ def test_config_manager_knowledge_config(tmp_dir):
 def test_config_manager_config_dir(tmp_dir):
     cm = ConfigManager(None, {}, tmp_dir)
     assert cm.config_dir == tmp_dir
+
+
+def test_get_returns_present_falsy_values(tmp_dir):
+    (tmp_dir / "config.yaml").write_text(
+        "feature:\n  enabled: false\n  count: 0\n  name: ''\n"
+    )
+    cm = ConfigManager(None, {"feature.enabled": True}, tmp_dir)
+    # Present-but-falsy values must win over the extension-config fallback.
+    assert cm.get("feature.enabled") is False
+    assert cm.get("feature.count") == 0
+    assert cm.get("feature.name") == ""
+    # Missing keys fall back to the extension config / default.
+    assert cm.get("feature.missing", "fallback") == "fallback"
+    assert cm.get("unknown", "d") == "d"
+
+
+def test_raw_provider_config_keeps_env_reference(tmp_dir, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "resolved-value")
+    (tmp_dir / "config.yaml").write_text(
+        "providers:\n  openai:\n    api_key: ${OPENAI_API_KEY}\n"
+    )
+    cm = ConfigManager(None, {}, tmp_dir)
+    # Resolved view...
+    assert cm.get_provider_config()["openai"]["api_key"] == "resolved-value"
+    # ...but the raw view preserves the reference for round-tripping.
+    assert cm.raw_provider_config()["openai"]["api_key"] == "${OPENAI_API_KEY}"

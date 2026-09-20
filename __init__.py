@@ -2,16 +2,18 @@
 # mypy: disable-error-code="arg-type"
 
 import json
-import traceback
+import logging
 from pathlib import Path
 from typing import Any
 
 from fava.ext import FavaExtensionBase, extension_endpoint
 from fava_ai._version import __version__
-from fava_ai.agent.limits import LimitExceeded
+from fava_ai.agent.errors import AgentError
 from flask import Response, jsonify, request, stream_with_context
 
 __all__ = ["FavaAI", "__version__"]
+
+logger = logging.getLogger(__name__)
 
 
 class FavaAI(FavaExtensionBase):
@@ -117,6 +119,55 @@ class FavaAI(FavaExtensionBase):
 
     # ── API Endpoints ──────────────────────────────────────────────
 
+    def _persist_exchange(self, result, conversation_id, provider_name, user_message):
+        """Persist new messages and provenance for a completed agent run.
+
+        Returns the id of the final assistant message (or None). Shared by the
+        blocking and streaming chat endpoints so both keep history and traces.
+        """
+        if not self._db:
+            return None
+        from fava_ai.storage.conversations import (
+            create_conversation,
+            save_message,
+            update_title,
+        )
+        from fava_ai.storage.traces import save_trace
+
+        conv_id = result["conversation_id"]
+        if not conversation_id:
+            provider = provider_name or (
+                self.config.get("provider", "") if self.config else ""
+            )
+            try:
+                create_conversation(
+                    self._db, id=conv_id, title=user_message[:80],
+                    provider=provider, model="",
+                )
+            except Exception:
+                # Conversation already exists (retry / duplicate id): continue.
+                logger.debug("Conversation %s already exists", conv_id)
+
+        assistant_msg_id = None
+        for msg in result.get("new_messages", result["messages"]):
+            if msg.role == "system":
+                continue
+            mid = save_message(self._db, conv_id, msg)
+            if msg.role == "assistant" and not msg.tool_calls:
+                assistant_msg_id = mid
+
+        if assistant_msg_id:
+            steps = result.get("provenance", {}).get("steps", [])
+            if steps:
+                save_trace(self._db, assistant_msg_id, steps)
+
+        title = user_message[:80] if len(user_message) > 80 else user_message
+        try:
+            update_title(self._db, conv_id, title)
+        except Exception:
+            logger.debug("Could not update title for %s", conv_id)
+        return assistant_msg_id
+
     @extension_endpoint("chat", methods=["POST"])
     def api_chat(self):
         try:
@@ -142,34 +193,13 @@ class FavaAI(FavaExtensionBase):
             )
 
             conv_id = result["conversation_id"]
-            if self._db:
-                from fava_ai.storage.conversations import (
-                    create_conversation,
-                    save_message,
-                    update_title,
-                )
-                if not conversation_id:
-                    provider = provider_name or (
-                        self.config.get("provider", "") if self.config else ""
-                    )
-                    create_conversation(
-                        self._db, id=conv_id, title=user_message[:80],
-                        provider=provider, model=""
-                    )
-
-                # Only save NEW messages (not re-loaded history)
-                for msg in result.get("new_messages", result["messages"]):
-                    if msg.role != "system":
-                        save_message(self._db, conv_id, msg)
-
-                title = user_message[:80] if len(user_message) > 80 else user_message
-                try:
-                    update_title(self._db, conv_id, title)
-                except Exception:
-                    pass
+            message_id = self._persist_exchange(
+                result, conversation_id, provider_name, user_message
+            )
 
             return jsonify({
                 "conversation_id": conv_id,
+                "message_id": message_id,
                 "content": result["content"],
                 "usage": result.get("usage"),
                 "provenance": result.get("provenance", {}),
@@ -177,10 +207,12 @@ class FavaAI(FavaExtensionBase):
                 "tool_call_count": result.get("tool_call_count", 0),
             })
 
-        except LimitExceeded as e:
-            return jsonify({"error": f"Limit exceeded: {e}"}), 429
+        except AgentError as e:
+            return jsonify({
+                "error": str(e), "error_type": type(e).__name__,
+            }), e.http_status
         except Exception as e:
-            traceback.print_exc()
+            logger.exception("chat endpoint failed")
             return jsonify({"error": str(e)}), 500
 
     @extension_endpoint("chat_stream", methods=["POST"])
@@ -204,16 +236,20 @@ class FavaAI(FavaExtensionBase):
                     messages=messages, provider_name=provider_name,
                 )
 
-                yield f"data: {json.dumps({'type': 'content', 'content': result['content'], 'conversation_id': result['conversation_id']})}\n\n"
+                message_id = self._persist_exchange(
+                    result, conversation_id, provider_name, user_message
+                )
+
+                yield f"data: {json.dumps({'type': 'content', 'content': result['content'], 'conversation_id': result['conversation_id'], 'message_id': message_id})}\n\n"
                 for step in result.get("provenance", {}).get("steps", []):
                     if step.get("step_type") == "tool_call":
                         yield f"data: {json.dumps({'type': 'tool_call', 'step': step})}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'usage': result.get('usage'), 'provenance_summary': result.get('provenance_summary', '')})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'conversation_id': result['conversation_id'], 'message_id': message_id, 'usage': result.get('usage'), 'provenance_summary': result.get('provenance_summary', '')})}\n\n"
 
-            except LimitExceeded as e:
-                yield f"data: {json.dumps({'type': 'error', 'error': f'Limit exceeded: {e}'})}\n\n"
+            except AgentError as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'error_type': type(e).__name__})}\n\n"
             except Exception as e:
-                traceback.print_exc()
+                logger.exception("chat_stream endpoint failed")
                 yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
         return Response(
@@ -229,11 +265,10 @@ class FavaAI(FavaExtensionBase):
         conv_id = request.args.get("id")
         from fava_ai.storage.conversations import get_conversation, list_conversations
         if conv_id:
-            if request.method == "GET":
-                conv = get_conversation(self._db, conv_id)
-                if not conv:
-                    return jsonify({"error": "Not found"}), 404
-                return jsonify(conv)
+            conv = get_conversation(self._db, conv_id)
+            if not conv:
+                return jsonify({"error": "Not found"}), 404
+            return jsonify(conv)
         return jsonify(list_conversations(self._db))
 
     @extension_endpoint("conversations", methods=["POST"])
@@ -241,12 +276,16 @@ class FavaAI(FavaExtensionBase):
         if not self._db:
             return jsonify({"error": "No database"}), 500
         data = request.get_json() or {}
-        from fava_ai.storage.conversations import create_conversation
+        from fava_ai.storage.conversations import create_conversation, get_conversation
+        conv_id = data.get("id")
+        if conv_id and get_conversation(self._db, conv_id):
+            return jsonify({"error": f"Conversation already exists: {conv_id}"}), 409
         conv = create_conversation(
             self._db,
             title=data.get("title", ""),
             provider=data.get("provider", ""),
             model=data.get("model", ""),
+            id=conv_id,
         )
         return jsonify(conv), 201
 
@@ -308,15 +347,32 @@ class FavaAI(FavaExtensionBase):
     def api_update_config(self):
         import yaml
         data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data"}), 400
-        config_path = self._config_manager._config_dir / "config.yaml"
+        if not isinstance(data, dict) or not data:
+            return jsonify({"error": "Expected a JSON object"}), 400
+
+        # Preserve masked secrets: a value of "***" means "leave unchanged".
+        # Read from the raw on-disk config so `${ENV_VAR}` references survive.
+        raw_providers = self._config_manager.raw_provider_config()
+        providers = data.get("providers")
+        if isinstance(providers, dict):
+            for name, cfg in providers.items():
+                if not isinstance(cfg, dict):
+                    continue
+                if cfg.get("api_key") == "***":
+                    raw_key = (raw_providers.get(name) or {}).get("api_key")
+                    if raw_key:
+                        cfg["api_key"] = raw_key
+                    else:
+                        cfg.pop("api_key", None)
+
+        config_path = self._config_manager.config_dir / "config.yaml"
         try:
             with open(config_path, "w") as f:
                 yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
             self._config_manager._load_yaml()
             return jsonify({"saved": True, "path": str(config_path)})
         except Exception as e:
+            logger.exception("failed to write config")
             return jsonify({"error": str(e)}), 500
 
     @extension_endpoint("providers", methods=["GET"])
@@ -334,6 +390,9 @@ class FavaAI(FavaExtensionBase):
             return jsonify({"connected": False, "error": "No provider configured"})
         try:
             connected = provider.test_connection()
+            name = provider_name or getattr(provider, "provider_name", "")
+            # Refresh the cache with the fresh result.
+            self._provider_registry.set_connection(name, connected)
             return jsonify({"connected": connected})
         except Exception as e:
             return jsonify({"connected": False, "error": str(e)})
@@ -416,4 +475,6 @@ class FavaAI(FavaExtensionBase):
                     self.ledger.all_entries, self.ledger.options
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Knowledge base extraction failed; continuing without rebuild"
+                )

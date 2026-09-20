@@ -22,6 +22,10 @@ class ConfigManager:
         self._ledger = ledger
         self._extension_config = extension_config
         self._config_dir = Path(config_dir)
+        # Raw (un-substituted) config as read from disk. Kept so writes can
+        # preserve ``${ENV_VAR}`` references instead of overwriting them with
+        # resolved or masked values.
+        self._raw_config: dict = {}
         self._yaml_config: dict = {}
         self._load_yaml()
 
@@ -30,7 +34,13 @@ class ConfigManager:
         if yaml_path.exists():
             with open(yaml_path) as f:
                 raw = yaml.safe_load(f) or {}
+            if not isinstance(raw, dict):
+                raw = {}
+            self._raw_config = raw
             self._yaml_config = self._substitute_env(raw)
+        else:
+            self._raw_config = {}
+            self._yaml_config = {}
 
     @staticmethod
     def _substitute_env(data):
@@ -44,6 +54,11 @@ class ConfigManager:
                 lambda m: os.environ.get(m.group(1), m.group(0)), data
             )
         return data
+
+    def raw_provider_config(self) -> dict:
+        """Provider config exactly as written on disk (env refs unresolved)."""
+        providers = self._raw_config.get("providers", {})
+        return providers if isinstance(providers, dict) else {}
 
     def get_provider_config(self) -> dict:
         providers = {}
@@ -79,13 +94,22 @@ class ConfigManager:
         return config
 
     def get(self, key: str, default=None):
-        yaml_val = self._yaml_config
+        """Look up a dotted key in the YAML config, falling back to the
+        beancount extension config.
+
+        Unlike a naive ``dict.get`` chain, a present-but-falsy YAML value
+        (``false``, ``0``, ``""``) is returned as-is instead of being treated
+        as missing.
+        """
+        yaml_val: object = self._yaml_config
+        found = True
         for part in key.split("."):
-            if isinstance(yaml_val, dict):
-                yaml_val = yaml_val.get(part, {})
+            if isinstance(yaml_val, dict) and part in yaml_val:
+                yaml_val = yaml_val[part]
             else:
-                yaml_val = {}
-        if yaml_val and yaml_val != {}:
+                found = False
+                break
+        if found:
             return yaml_val
         return self._extension_config.get(key, default)
 

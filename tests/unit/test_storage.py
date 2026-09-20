@@ -21,7 +21,9 @@ def test_database_initialize(tmp_dir):
     assert "config" in table_names
     assert "prompt_registry" in table_names
 
-    version = db.conn.execute("SELECT version FROM schema_version").fetchone()
+    version = db.conn.execute(
+        "SELECT MAX(version) AS version FROM schema_version"
+    ).fetchone()
     assert version["version"] == SCHEMA_VERSION
 
     db.close()

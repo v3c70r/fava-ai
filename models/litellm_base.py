@@ -114,7 +114,13 @@ class LiteLLMProvider(BaseProvider):
         if not self.api_key and not self.base_url:
             return False
         try:
-            self.chat([Message(role="user", content="hi")])
+            # A 1-token completion is the most portable liveness check across
+            # litellm providers. Providers with a cheaper endpoint override this.
+            self.chat(
+                [Message(role="user", content="ping")],
+                max_tokens=1,
+                timeout=10,
+            )
             return True
         except Exception:
             return False
