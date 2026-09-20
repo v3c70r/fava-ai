@@ -104,3 +104,10 @@ class ProviderRegistry:
 
     def register(self, name: str, provider: BaseProvider):
         self._providers[name] = provider
+
+    def alias_of(self, provider: BaseProvider) -> str | None:
+        """Return the configured alias for a provider instance (or None)."""
+        for alias, candidate in self._providers.items():
+            if candidate is provider:
+                return alias
+        return None

@@ -78,7 +78,7 @@ def build_stack(args):
             "local": {
                 "type": "openai_compat",
                 "base_url": args.base_url,
-                "api_key": args.api_key,
+                "api_key": args.api_key or "",
                 "model": args.model,
             }
         },
@@ -189,7 +189,8 @@ def run_stream_question(runtime, question):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://localhost:8080/v1")
-    parser.add_argument("--api-key", default="simple_token")
+    parser.add_argument("--api-key", default=None,
+                        help="API key for the endpoint (omit for none)")
     parser.add_argument("--model", required=True)
     parser.add_argument("--ledger", default="tests/data/ledgers/rich-features.beancount")
     parser.add_argument("--config-dir", default=".eval-fava-ai")

@@ -429,15 +429,26 @@ class FavaAI(FavaExtensionBase):
     def api_test_provider(self):
         data = request.get_json() or {}
         provider_name = data.get("provider", "")
-        provider = self._provider_registry.get(provider_name)
-        if not provider:
+        if provider_name:
+            provider = self._provider_registry.get(provider_name)
+            if not provider:
+                return jsonify({
+                    "connected": False,
+                    "error": f"Unknown provider: {provider_name}",
+                }), 404
+        else:
             provider = self._provider_registry.get_default()
         if not provider:
             return jsonify({"connected": False, "error": "No provider configured"})
         try:
             connected = provider.test_connection()
-            name = provider_name or getattr(provider, "provider_name", "")
-            # Refresh the cache with the fresh result.
+            # Key the cache by the configured alias (not the provider type),
+            # so list_providers() sees the fresh result.
+            name = (
+                provider_name
+                or self._provider_registry.alias_of(provider)
+                or getattr(provider, "provider_name", "")
+            )
             self._provider_registry.set_connection(name, connected)
             return jsonify({"connected": connected})
         except Exception as e:

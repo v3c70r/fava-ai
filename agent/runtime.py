@@ -290,6 +290,7 @@ class AgentRuntime:
             tracker.record_plan(iteration)
 
             content_parts: list[str] = []
+            reasoning_parts: list[str] = []
             final_tool_calls = None
             attempts = max(1, self._limits.retries + 1)
             for attempt in range(attempts):
@@ -304,6 +305,7 @@ class AgentRuntime:
                                 f"{self._limits.timeout_seconds}s"
                             )
                         if chunk.reasoning:
+                            reasoning_parts.append(chunk.reasoning)
                             yield {
                                 "type": "reasoning_delta",
                                 "content": chunk.reasoning,
@@ -321,9 +323,12 @@ class AgentRuntime:
                         raise ProviderTimeoutError(
                             f"Model timed out after {self._limits.timeout_seconds}s"
                         ) from e
-                    # Only retry if nothing has been streamed yet, otherwise we
-                    # would duplicate already-rendered output.
-                    if content_parts or attempt == attempts - 1 or not _is_retryable(e):
+                    # Only retry if nothing has been streamed yet (reasoning
+                    # included), otherwise we would duplicate rendered output.
+                    if (
+                        content_parts or reasoning_parts
+                        or attempt == attempts - 1 or not _is_retryable(e)
+                    ):
                         raise ProviderError(f"Provider stream failed: {e}") from e
                     final_tool_calls = None
                     time.sleep(min(2 ** attempt, 8))

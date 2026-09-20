@@ -332,6 +332,61 @@ def test_run_stream_emits_reasoning_deltas():
     assert events[-1]["type"] == "done"
 
 
+class FlakyStreamProvider(BaseProvider):
+    """Fails N times with a retryable error, optionally after streaming reasoning."""
+
+    def __init__(self, fail_times, after_reasoning=False):
+        self._fail_times = fail_times
+        self._after_reasoning = after_reasoning
+        self.calls = 0
+
+    @property
+    def provider_name(self):
+        return "flaky-stream"
+
+    def chat(self, messages, tools=None, model=None, **kwargs):
+        raise AssertionError("run_stream must not call chat()")
+
+    def chat_stream(self, messages, tools=None, model=None, **kwargs):
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            if self._after_reasoning:
+                yield StreamChunk(reasoning="partial thought")
+            raise ConnectionError("connection reset")
+        yield StreamChunk(content="recovered")
+        yield StreamChunk(finish_reason="stop")
+
+    def list_models(self):
+        return []
+
+    def test_connection(self):
+        return True
+
+
+def test_run_stream_retries_when_nothing_streamed(monkeypatch):
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    provider = FlakyStreamProvider(fail_times=1)
+    agent = _make_agent(provider, config={"retries": 2, "max_iterations": 3})
+
+    events = list(agent.run_stream("hi", provider_name="stream"))
+
+    assert provider.calls == 2
+    assert events[-1]["type"] == "done"
+    assert events[-1]["result"]["content"] == "recovered"
+
+
+def test_run_stream_does_not_retry_after_reasoning_streamed(monkeypatch):
+    """Retrying after reasoning was rendered would duplicate the Thinking block."""
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    provider = FlakyStreamProvider(fail_times=1, after_reasoning=True)
+    agent = _make_agent(provider, config={"retries": 2, "max_iterations": 3})
+
+    with pytest.raises(ProviderError, match="connection reset"):
+        list(agent.run_stream("hi", provider_name="stream"))
+
+    assert provider.calls == 1
+
+
 def test_run_stream_passes_model_and_prompt():
     from fava_ai.prompts.registry import PromptRegistry
 
