@@ -1,6 +1,6 @@
 [project]
 name = "fava-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "An extensible, local-first AI assistant for Beancount/Fava"
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    "build>=1.2",
 ]
 
 [project.urls]

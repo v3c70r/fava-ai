@@ -150,21 +150,14 @@ class AgentRuntime:
             return f"{content[:limit]}\n... [truncated {extra} chars]"
         return content
 
-    def _invoke(self, provider, messages, tools, remaining, model):
-        try:
-            return provider.chat(
-                messages, tools=tools, model=model, timeout=remaining
-            )
-        except TypeError:
-            # Provider doesn't accept a timeout kwarg.
-            return provider.chat(messages, tools=tools, model=model)
-
     def _call_provider(self, provider, messages, tools, remaining, model):
         """Call the provider, retrying transient failures as ProviderError."""
         attempts = max(1, self._limits.retries + 1)
         for attempt in range(attempts):
             try:
-                return self._invoke(provider, messages, tools, remaining, model)
+                return provider.chat(
+                    messages, tools=tools, model=model, timeout=remaining
+                )
             except (LimitExceeded, ProviderError):
                 raise
             except Exception as e:  # noqa: BLE001 - normalise provider failures
