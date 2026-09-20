@@ -46,6 +46,19 @@ def test_chat_requires_message(client, ext):
     assert resp.status_code == 400
 
 
+def test_message_token_count_is_persisted(client, ext):
+    ext._agent_runtime = StubRuntime(make_result())
+    resp = client.post("/chat", json={"message": "hello"})
+    conv_id = resp.get_json()["conversation_id"]
+
+    rows = ext.db.conn.execute(
+        "SELECT role, token_count FROM messages WHERE conversation_id = ? ORDER BY seq",
+        (conv_id,),
+    ).fetchall()
+    assert rows
+    assert all(r["token_count"] and r["token_count"] > 0 for r in rows)
+
+
 def test_chat_passes_provider_model_and_prompt(client, ext):
     stub = StubRuntime(make_result())
     ext._agent_runtime = stub

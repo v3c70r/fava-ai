@@ -10,6 +10,9 @@ DEFAULT_CONFIG: dict[str, dict] = {
         "max_tool_calls": 20,
         "timeout_seconds": 120,
         "system_prompt": "default",
+        "max_context_tokens": 12000,
+        "max_tool_result_chars": 8000,
+        "retries": 2,
     },
     "knowledge": {
         "auto_extract": True,
@@ -28,6 +31,7 @@ _ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools"}
 _ALLOWED_PROVIDER_KEYS = {"api_key", "base_url", "model", "timeout", "test_connection_method"}
 _ALLOWED_AGENT_KEYS = {
     "max_iterations", "max_tool_calls", "timeout_seconds", "system_prompt", "retries",
+    "max_context_tokens", "max_tool_result_chars",
 }
 _ALLOWED_KNOWLEDGE_KEYS = {"auto_extract"}
 _ALLOWED_TOOLS_KEYS = {"external_enabled"}
@@ -79,7 +83,10 @@ def validate_config(data) -> list[str]:
             extra = set(agent) - _ALLOWED_AGENT_KEYS
             if extra:
                 errors.append(f"'agent' has unknown keys: {sorted(extra)}")
-            for key in ("max_iterations", "max_tool_calls", "timeout_seconds", "retries"):
+            for key in (
+                "max_iterations", "max_tool_calls", "timeout_seconds", "retries",
+                "max_context_tokens", "max_tool_result_chars",
+            ):
                 if key in agent and (not _is_int(agent[key]) or agent[key] < 1):
                     errors.append(f"'agent.{key}' must be a positive integer")
             if "system_prompt" in agent and not isinstance(agent["system_prompt"], str):

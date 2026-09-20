@@ -20,6 +20,28 @@ from fava_ai.agent.limits import ExecutionLimits
 from fava_ai.models.base import Message
 from fava_ai.provenance.tracker import ExecutionTracker
 
+#: Exception class names (from litellm / provider SDKs) worth retrying.
+_RETRYABLE_ERROR_NAMES = {
+    "RateLimitError",
+    "APIConnectionError",
+    "InternalServerError",
+    "ServiceUnavailableError",
+    "Timeout",
+    "APITimeoutError",
+}
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Transient provider failures (rate limits, 5xx, connection) are retryable."""
+    if type(exc).__name__ in _RETRYABLE_ERROR_NAMES:
+        return True
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status == 429 or status >= 500
+    return False
+
 
 class AgentRuntime:
     def __init__(
@@ -37,6 +59,9 @@ class AgentRuntime:
             max_iterations=agent_config.get("max_iterations", 10),
             max_tool_calls=agent_config.get("max_tool_calls", 20),
             timeout_seconds=agent_config.get("timeout_seconds", 120),
+            max_context_tokens=agent_config.get("max_context_tokens", 12000),
+            max_tool_result_chars=agent_config.get("max_tool_result_chars", 8000),
+            retries=agent_config.get("retries", 2),
         )
 
     # ── setup helpers ─────────────────────────────────────────────
@@ -62,13 +87,21 @@ class AgentRuntime:
         """Insert the system prompt and the user turn into the message list."""
         if messages is None:
             messages = []
+        history, omitted = self._context_builder.trim_history(
+            messages, self._limits.max_context_tokens
+        )
         system_prompt = self._context_builder.build_system_prompt(
             user_message, prompt_id=prompt_id
         )
-        messages.insert(0, Message(role="system", content=system_prompt))
-        existing_count = len(messages)
-        messages.append(Message(role="user", content=user_message))
-        return messages, existing_count
+        if omitted:
+            system_prompt += (
+                f"\n\nNote: {omitted} earlier message(s) were omitted to fit "
+                "the context window."
+            )
+        out = [Message(role="system", content=system_prompt), *history]
+        existing_count = len(out)
+        out.append(Message(role="user", content=user_message))
+        return out, existing_count
 
     def _result(self, conversation_id, content, messages, existing_count,
                 tracker, usage, tool_call_count):
@@ -107,22 +140,38 @@ class AgentRuntime:
             tool_output=content,
             error=error,
         )
-        return content, error, tool_name
+        return self._cap_tool_result(content), error, tool_name
+
+    def _cap_tool_result(self, content: str) -> str:
+        """Bound the tool output fed back to the model."""
+        limit = self._limits.max_tool_result_chars
+        if limit and len(content) > limit:
+            extra = len(content) - limit
+            return f"{content[:limit]}\n... [truncated {extra} chars]"
+        return content
+
+    def _invoke(self, provider, messages, tools, remaining, model):
+        try:
+            return provider.chat(
+                messages, tools=tools, model=model, timeout=remaining
+            )
+        except TypeError:
+            # Provider doesn't accept a timeout kwarg.
+            return provider.chat(messages, tools=tools, model=model)
 
     def _call_provider(self, provider, messages, tools, remaining, model):
-        """Call the provider, translating unexpected failures into ProviderError."""
-        try:
+        """Call the provider, retrying transient failures as ProviderError."""
+        attempts = max(1, self._limits.retries + 1)
+        for attempt in range(attempts):
             try:
-                return provider.chat(
-                    messages, tools=tools, model=model, timeout=remaining
-                )
-            except TypeError:
-                # Provider doesn't accept a timeout kwarg.
-                return provider.chat(messages, tools=tools, model=model)
-        except (LimitExceeded, ProviderError):
-            raise
-        except Exception as e:  # noqa: BLE001 - normalise provider failures
-            raise ProviderError(f"Provider request failed: {e}") from e
+                return self._invoke(provider, messages, tools, remaining, model)
+            except (LimitExceeded, ProviderError):
+                raise
+            except Exception as e:  # noqa: BLE001 - normalise provider failures
+                if attempt == attempts - 1 or not _is_retryable(e):
+                    raise ProviderError(f"Provider request failed: {e}") from e
+                time.sleep(min(2 ** attempt, 8))
+        raise ProviderError("Provider request failed")  # pragma: no cover
 
     # ── blocking loop ─────────────────────────────────────────────
 
@@ -215,20 +264,28 @@ class AgentRuntime:
 
             content_parts: list[str] = []
             final_tool_calls = None
-            try:
-                stream = provider.chat_stream(messages, tools=tools, model=model)
-                for chunk in stream:
-                    if self._limits.timeout_seconds - (time.time() - start_time) <= 0:
-                        raise LimitExceeded("timeout")
-                    if chunk.content:
-                        content_parts.append(chunk.content)
-                        yield {"type": "content_delta", "content": chunk.content}
-                    if chunk.tool_calls:
-                        final_tool_calls = chunk.tool_calls
-            except (LimitExceeded, ProviderError):
-                raise
-            except Exception as e:  # noqa: BLE001 - normalise provider failures
-                raise ProviderError(f"Provider stream failed: {e}") from e
+            attempts = max(1, self._limits.retries + 1)
+            for attempt in range(attempts):
+                try:
+                    stream = provider.chat_stream(messages, tools=tools, model=model)
+                    for chunk in stream:
+                        if self._limits.timeout_seconds - (time.time() - start_time) <= 0:
+                            raise LimitExceeded("timeout")
+                        if chunk.content:
+                            content_parts.append(chunk.content)
+                            yield {"type": "content_delta", "content": chunk.content}
+                        if chunk.tool_calls:
+                            final_tool_calls = chunk.tool_calls
+                    break
+                except (LimitExceeded, ProviderError):
+                    raise
+                except Exception as e:  # noqa: BLE001 - normalise provider failures
+                    # Only retry if nothing has been streamed yet, otherwise we
+                    # would duplicate already-rendered output.
+                    if content_parts or attempt == attempts - 1 or not _is_retryable(e):
+                        raise ProviderError(f"Provider stream failed: {e}") from e
+                    final_tool_calls = None
+                    time.sleep(min(2 ** attempt, 8))
 
             if final_tool_calls:
                 messages.append(Message(

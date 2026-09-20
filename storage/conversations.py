@@ -73,7 +73,7 @@ def delete_conversation(db, conv_id: str):
     db.commit()
 
 
-def save_message(db, conv_id: str, message: Message) -> str:
+def save_message(db, conv_id: str, message: Message, token_count: int | None = None) -> str:
     msg_id = str(uuid.uuid4())
     now = _now()
 
@@ -85,12 +85,13 @@ def save_message(db, conv_id: str, message: Message) -> str:
 
     db.execute(
         "INSERT INTO messages (id, conversation_id, role, content, tool_calls, "
-        "tool_call_id, name, created_at, seq) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, "
+        "tool_call_id, name, token_count, created_at, seq) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
         "(SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE conversation_id = ?))",
         (
             msg_id, conv_id, message.role, message.content,
-            tool_calls_json, message.tool_call_id, message.name, now, conv_id,
+            tool_calls_json, message.tool_call_id, message.name, token_count, now,
+            conv_id,
         ),
     )
     db.execute(

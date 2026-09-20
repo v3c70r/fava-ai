@@ -154,7 +154,11 @@ class FavaAI(FavaExtensionBase):
         for msg in result.get("new_messages", result["messages"]):
             if msg.role == "system":
                 continue
-            mid = save_message(self._db, conv_id, msg)
+            token_count = None
+            if msg.content:
+                from fava_ai.agent.tokens import count_tokens
+                token_count = count_tokens([msg])
+            mid = save_message(self._db, conv_id, msg, token_count=token_count)
             if msg.role == "assistant" and not msg.tool_calls:
                 assistant_msg_id = mid
 

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Context-window management: history is trimmed to `agent.max_context_tokens` (keeping
+  the newest turns and never orphaning tool results), tool results are capped to
+  `agent.max_tool_result_chars`, and per-message `token_count` is persisted.
+- Provider retries with exponential backoff for transient failures (rate limits, 5xx,
+  connection errors); auth errors are not retried (`agent.retries`).
 - Real token streaming: `AgentRuntime.run_stream` drives litellm's streaming API,
   reassembles fragmented tool calls, and emits `content_delta` / `tool_call` / `done`
   SSE events. The UI renders tokens live with a Stop button.
