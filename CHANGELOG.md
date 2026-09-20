@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-20
+
+Packaging, streaming, context management and knowledge-base performance release.
+
 ### Added
 - Knowledge-base performance: `index.md` is rebuilt once per extraction instead of
   per page, searches use a stat-invalidated cache, and edits to cost/price/tags/links

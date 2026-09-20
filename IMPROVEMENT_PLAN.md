@@ -1,5 +1,9 @@
 # Fava AI — Improvement & Test Plan
 
+> **Status: implemented (0.2.0).** Stages 0–6 below were carried out. Stage 7 remains
+> deferred backlog. See `CHANGELOG.md` for the concrete changes. The plan is kept as
+> the design record; line/file references describe the pre-0.2.0 state.
+
 > **Audience:** an implementing agent. This document is a staged plan, not a design doc.
 > Each stage lists: goals, concrete changes (with file references), and acceptance criteria.
 > Stages are ordered by priority; within a stage, items are independent unless noted.

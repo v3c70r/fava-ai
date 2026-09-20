@@ -343,11 +343,23 @@ FAVA_AI_SAMPLE_LEDGERS=$PWD/.sample-ledgers python3 scripts/analyze_ledgers.py
 ```
 tests/
   unit/        # pure logic tests
+  integration/ # Flask test-client endpoint tests
   llm/         # agent loop with mock providers
   data/        # checked-in .beancount fixtures
-  test_ledger_fixtures.py
-scripts/       # manual analysis / provider smoke tests (not part of CI)
-docs/          # design & history documents
+scripts/       # manual analysis / provider smoke tests / packaging checks
+docs/          # design, history & security documents
+```
+
+### Packaging
+
+The project uses a flat layout (the repository root *is* the `fava_ai` package,
+configured via `package-dir`). Wheels are verified to contain only the package
+modules plus `FavaAI.js` and `templates/FavaAI.html`:
+
+```bash
+python -m build --wheel
+python scripts/check_wheel.py
+pip install dist/fava_ai-*.whl   # in a clean environment
 ```
 
 ## License

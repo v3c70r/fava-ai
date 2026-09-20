@@ -48,6 +48,12 @@ jobs:
         if: matrix.python-version == '3.12'
         run: pytest -q -m slow
 
+      - name: Build wheel and verify contents
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m build --wheel
+          python scripts/check_wheel.py
+
       - name: Upload coverage
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
