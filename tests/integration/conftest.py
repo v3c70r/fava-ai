@@ -50,9 +50,10 @@ def client(ext):
 class StubRuntime:
     """Drop-in replacement for AgentRuntime returning a canned result/error."""
 
-    def __init__(self, result=None, error=None):
+    def __init__(self, result=None, error=None, events=None):
         self._result = result
         self._error = error
+        self._events = events
         self.calls = []
 
     def run(self, **kwargs):
@@ -60,6 +61,20 @@ class StubRuntime:
         if self._error is not None:
             raise self._error
         return self._result
+
+    def run_stream(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        if self._events is not None:
+            yield from self._events
+            return
+        result = self._result if self._result is not None else make_result()
+        yield {"type": "content_delta", "content": result["content"]}
+        for step in result.get("provenance", {}).get("steps", []):
+            if step.get("step_type") == "tool_call":
+                yield {"type": "tool_call", "step": step}
+        yield {"type": "done", "result": result}
 
 
 def make_result(
