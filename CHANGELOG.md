@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Knowledge-base performance: `index.md` is rebuilt once per extraction instead of
+  per page, searches use a stat-invalidated cache, and edits to cost/price/tags/links
+  now trigger a rebuild (the entries hash covers them).
+- `tests/data/ledgers/rich-features.beancount` fixture (multi-currency, cost basis,
+  prices, tags, links) plus a `slow`-marked 5k-transaction extraction smoke test.
 - Context-window management: history is trimmed to `agent.max_context_tokens` (keeping
   the newest turns and never orphaning tool results), tool results are capped to
   `agent.max_tool_result_chars`, and per-message `token_count` is persisted.

@@ -134,3 +134,84 @@ def test_ledger_tools_on_fixture():
     accounts = ListAccountsTool(ledger).execute()
     data = json.loads(accounts.content)
     assert data["count"] >= 50
+
+
+# ── rich feature fixture ──────────────────────────────────────────
+
+
+@pytest.mark.fixture
+def test_rich_fixture_parses():
+    entries, errors, options = load_fixture("rich-features")
+    assert errors == []
+    assert any(str(o) == "USD" for o in options.get("operating_currency", []))
+
+
+@pytest.mark.fixture
+def test_portfolio_holdings_from_rich_fixture(tmp_path):
+    from fava_ai.knowledge.extractors.portfolio import PortfolioExtractor
+    from fava_ai.knowledge.wiki import WikiManager
+
+    entries, errors, options = load_fixture("rich-features")
+    assert errors == []
+
+    wiki = WikiManager(tmp_path / "wiki")
+    stats = PortfolioExtractor(wiki).extract(entries, options)
+
+    assert stats["holdings"] >= 1
+    holdings = wiki.read("portfolio/holdings.md")
+    assert "VTI" in holdings.content
+
+
+@pytest.mark.fixture
+def test_full_extraction_on_rich_fixture(tmp_path):
+    from fava_ai.knowledge.engine import KnowledgeEngine
+    from fava_ai.knowledge.wiki import WikiManager
+
+    entries, errors, options = load_fixture("rich-features")
+    assert errors == []
+
+    wiki = WikiManager(tmp_path / "wiki")
+    engine = KnowledgeEngine(wiki)
+    engine.extract_all(entries, options)
+
+    assert wiki.exists("overview.md")
+    assert not engine.needs_rebuild(entries)
+
+
+@pytest.mark.slow
+@pytest.mark.fixture
+def test_large_ledger_extraction_performance(tmp_path):
+    """Smoke-test extraction on a 5k-transaction ledger."""
+    import time
+    from datetime import date, timedelta
+
+    from beancount import loader as bc_loader
+    from fava_ai.knowledge.engine import KnowledgeEngine
+    from fava_ai.knowledge.wiki import WikiManager
+
+    lines = ['option "operating_currency" "USD"', ""]
+    lines += [
+        "2010-01-01 open Assets:Checking",
+        "2010-01-01 open Expenses:Food",
+        "2010-01-01 open Income:Salary",
+    ]
+    start = date(2015, 1, 1)
+    for i in range(5000):
+        day = start + timedelta(days=i % 3000)
+        lines.append(f'{day} * "Merchant{i % 50}" "Purchase {i}"')
+        lines.append(f"  Expenses:Food  {10 + i % 200}.00 USD")
+        lines.append("  Assets:Checking")
+
+    entries, errors, options = bc_loader.load_string("\n".join(lines))
+    assert errors == []
+
+    wiki = WikiManager(tmp_path / "wiki")
+    engine = KnowledgeEngine(wiki)
+
+    started = time.time()
+    engine.extract_all(entries, options)
+    elapsed = time.time() - started
+
+    assert elapsed < 30, f"extraction took {elapsed:.1f}s"
+    # Second run is a no-op.
+    assert not engine.needs_rebuild(entries)

@@ -2,6 +2,7 @@
 
 import re
 import shutil
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -46,6 +47,28 @@ class WikiManager:
     def __init__(self, wiki_dir: Path):
         self.wiki_dir = Path(wiki_dir)
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
+        # Number of active `defer_index()` blocks; while > 0 the index is not
+        # rebuilt on every write (avoids O(n^2) work during full extraction).
+        self._index_deferrals = 0
+        # Lazy search cache: (stat-key) -> list of parsed page records.
+        self._search_cache: list[dict] | None = None
+        self._search_cache_key: tuple | None = None
+
+    @contextmanager
+    def defer_index(self):
+        """Batch many writes, rebuilding index.md and the search cache once."""
+        self._index_deferrals += 1
+        try:
+            yield
+        finally:
+            self._index_deferrals -= 1
+            if self._index_deferrals == 0:
+                self._invalidate_search_cache()
+                self._update_index()
+
+    def _invalidate_search_cache(self):
+        self._search_cache = None
+        self._search_cache_key = None
 
     def _safe_path(self, rel_path: str) -> Path:
         """Resolve rel_path and ensure it stays inside wiki_dir."""
@@ -73,38 +96,70 @@ class WikiManager:
         path = self._safe_path(rel_path)
         page = WikiPage(path, metadata, content)
         page.save()
+        self._invalidate_search_cache()
         self._update_index()
 
     def write_page(self, page: WikiPage):
         page.save()
+        self._invalidate_search_cache()
         self._update_index()
 
     # ── Search ────────────────────────────────────────────────────
+
+    def _search_index(self) -> list[dict]:
+        """Parsed, lowercased copy of every content page, cached by file stat.
+
+        Rebuilding only happens when a file's mtime/size changes, so repeated
+        searches during a chat turn are cheap.
+        """
+        files = sorted(
+            f for f in self.wiki_dir.rglob("*.md")
+            if f.name not in _META_FILES and not f.name.startswith("_")
+        )
+        try:
+            key = tuple(
+                (str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in files
+            )
+        except OSError:
+            key = None
+        if key is not None and self._search_cache is not None and self._search_cache_key == key:
+            return self._search_cache
+
+        entries = []
+        for md_file in files:
+            try:
+                text = md_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            page = WikiPage.from_file(md_file)
+            entries.append({
+                "path": str(md_file.relative_to(self.wiki_dir)),
+                "stem": md_file.stem,
+                "text": text,
+                "lower": text.lower(),
+                "title": page.metadata.get("title", md_file.stem),
+                "type": page.metadata.get("type", ""),
+            })
+        self._search_cache = entries
+        self._search_cache_key = key
+        return entries
 
     def search(self, query: str, max_results: int = 20) -> list[dict]:
         query_lower = query.lower()
         query_words = set(query_lower.split())
         results = []
-        for md_file in sorted(self.wiki_dir.rglob("*.md")):
-            if md_file.name in _META_FILES or md_file.name.startswith("_"):
-                continue
-            try:
-                text = md_file.read_text(encoding="utf-8")
-                text_lower = text.lower()
-                match = query_lower in text_lower
-                if not match:
-                    match = any(len(w) > 2 and w in text_lower for w in query_words)
-                if match:
-                    rel = str(md_file.relative_to(self.wiki_dir))
-                    page = WikiPage.from_file(md_file)
-                    results.append({
-                        "path": rel,
-                        "title": page.metadata.get("title", md_file.stem),
-                        "type": page.metadata.get("type", ""),
-                        "snippet": self._snippet(text, query_words, 120),
-                    })
-            except Exception:
-                continue
+        for entry in self._search_index():
+            text_lower = entry["lower"]
+            match = query_lower in text_lower
+            if not match:
+                match = any(len(w) > 2 and w in text_lower for w in query_words)
+            if match:
+                results.append({
+                    "path": entry["path"],
+                    "title": entry["title"],
+                    "type": entry["type"],
+                    "snippet": self._snippet(entry["text"], query_words, 120),
+                })
             if len(results) >= max_results:
                 break
         return results
@@ -147,6 +202,8 @@ class WikiManager:
     # ── Index ─────────────────────────────────────────────────────
 
     def _update_index(self):
+        if self._index_deferrals > 0:
+            return
         pages = []
         for md_file in sorted(self.wiki_dir.rglob("*.md")):
             if md_file.name in _META_FILES:
@@ -207,4 +264,5 @@ class WikiManager:
         dir_path = self._safe_path(rel_path)
         if dir_path.exists() and dir_path.is_dir():
             shutil.rmtree(dir_path)
+            self._invalidate_search_cache()
             self._update_index()

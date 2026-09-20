@@ -1,6 +1,7 @@
 """KnowledgeEngine — orchestrates extraction to wiki on ledger load."""
 
 import hashlib
+import os
 
 from fava_ai.knowledge.extractors.accounts import AccountExtractor
 from fava_ai.knowledge.extractors.merchants import MerchantExtractor
@@ -37,20 +38,20 @@ class KnowledgeEngine:
         self.wiki.append_log("extraction_start", {"entries": len(entries)})
 
         total_stats = {}
-        for name, extractor in self._extractors:
-            try:
-                stats = extractor.extract(entries, options)
-                total_stats[name] = stats
-            except Exception as e:
-                total_stats[name] = {"error": str(e)}
+        # Batch all page writes so index.md is rebuilt once instead of per page.
+        with self.wiki.defer_index():
+            for name, extractor in self._extractors:
+                try:
+                    stats = extractor.extract(entries, options)
+                    total_stats[name] = stats
+                except Exception as e:
+                    total_stats[name] = {"error": str(e)}
 
-        self._generate_overview(entries, options)
+            self._generate_overview(entries, options)
         self.wiki.append_log("extraction_complete", total_stats)
 
-        # Write hash AFTER successful extraction
-        h = self._compute_hash(entries)
-        hash_file = self.wiki.wiki_dir / ".entries_hash"
-        hash_file.write_text(h)
+        # Write hash AFTER successful extraction (atomically).
+        self._write_hash(entries)
         return total_stats
 
     def _init_agents_md(self, options):
@@ -112,6 +113,11 @@ class KnowledgeEngine:
 
     @staticmethod
     def _compute_hash(entries) -> str:
+        """Hash the fields that affect generated pages.
+
+        Includes cost/price, tags, links and metadata so edits that do not
+        change payee/narration/amounts still trigger a rebuild.
+        """
         h = hashlib.sha256()
         for e in entries:
             if hasattr(e, "date"):
@@ -120,10 +126,28 @@ class KnowledgeEngine:
                 h.update(str(e.payee).encode())
             if hasattr(e, "narration") and e.narration:
                 h.update(str(e.narration).encode())
+            if getattr(e, "tags", None):
+                h.update(str(sorted(e.tags)).encode())
+            if getattr(e, "links", None):
+                h.update(str(sorted(e.links)).encode())
+            if getattr(e, "meta", None):
+                h.update(str(sorted(
+                    (str(k), str(v)) for k, v in e.meta.items() if k != "filename"
+                )).encode())
             if hasattr(e, "postings"):
                 for p in e.postings:
                     h.update(p.account.encode())
                     if p.units:
                         h.update(str(p.units.number).encode())
                         h.update(str(p.units.currency).encode())
+                    if getattr(p, "cost", None) is not None:
+                        h.update(str(p.cost).encode())
+                    if getattr(p, "price", None) is not None:
+                        h.update(str(p.price).encode())
         return h.hexdigest()
+
+    def _write_hash(self, entries) -> None:
+        hash_file = self.wiki.wiki_dir / ".entries_hash"
+        tmp_file = self.wiki.wiki_dir / ".entries_hash.tmp"
+        tmp_file.write_text(self._compute_hash(entries), encoding="utf-8")
+        os.replace(tmp_file, hash_file)

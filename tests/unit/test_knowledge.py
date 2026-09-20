@@ -163,3 +163,92 @@ def test_engine_rebuild_idempotent(tmp_path, sample_entries):
     engine = KnowledgeEngine(wiki)
     engine.extract_all(sample_entries, {"operating_currency": ["USD"]})
     assert not engine.needs_rebuild(sample_entries)
+
+
+# ── performance: deferred index + search cache ────────────────────
+
+
+def test_extract_all_rebuilds_index_once(tmp_path, sample_entries):
+    from fava_ai.knowledge.engine import KnowledgeEngine
+
+    wiki = WikiManager(tmp_path / "wiki")
+    rebuilds = []
+    original = wiki._update_index
+
+    def spy():
+        if wiki._index_deferrals == 0:
+            rebuilds.append(1)
+        original()
+
+    wiki._update_index = spy
+    KnowledgeEngine(wiki).extract_all(sample_entries, {"operating_currency": ["USD"]})
+
+    # Many pages are written, but index.md is regenerated only once.
+    assert len(rebuilds) == 1
+    assert wiki.exists("index.md")
+
+
+def test_search_cache_is_reused_and_invalidated(tmp_path):
+    wiki = WikiManager(tmp_path / "wiki")
+    wiki.write("a.md", "alpha content", {"title": "A", "type": "note"})
+
+    assert wiki.search("alpha")
+    cached = wiki._search_cache
+    assert cached is not None
+
+    # A second search reuses the cache object (no rebuild).
+    wiki.search("alpha")
+    assert wiki._search_cache is cached
+
+    # A write invalidates it.
+    wiki.write("b.md", "beta content", {"title": "B", "type": "note"})
+    assert wiki._search_cache is None
+    assert wiki.search("beta")
+
+
+def test_search_cache_reflects_new_files(tmp_path):
+    wiki = WikiManager(tmp_path / "wiki")
+    wiki.write("a.md", "alpha", {"title": "A", "type": "note"})
+    assert wiki.search("alpha")
+    assert not wiki.search("gamma")
+
+    wiki.write("c.md", "gamma rays", {"title": "C", "type": "note"})
+    assert wiki.search("gamma")
+
+
+# ── hash completeness ─────────────────────────────────────────────
+
+
+def test_hash_changes_when_tags_change(tmp_path, sample_entries):
+    from fava_ai.knowledge.engine import KnowledgeEngine
+
+    wiki = WikiManager(tmp_path / "wiki")
+    engine = KnowledgeEngine(wiki)
+
+    before = engine._compute_hash(sample_entries)
+    sample_entries[0].tags.add("new-tag")
+    after = engine._compute_hash(sample_entries)
+    assert before != after
+
+
+def test_hash_changes_when_cost_changes(tmp_path, sample_entries):
+    from decimal import Decimal
+
+    from beancount.core.amount import Amount
+    from fava_ai.knowledge.engine import KnowledgeEngine
+
+    engine = KnowledgeEngine(WikiManager(tmp_path / "wiki"))
+    before = engine._compute_hash(sample_entries)
+
+    # beancount entries are namedtuples, so rebuild with a price attached.
+    first = sample_entries[0]
+    priced_posting = first.postings[0]._replace(
+        price=Amount(Decimal("1.00"), "USD")
+    )
+    modified_first = first._replace(
+        postings=[priced_posting, *first.postings[1:]]
+    )
+    modified = [modified_first, *sample_entries[1:]]
+
+    after = engine._compute_hash(modified)
+    assert before != after
