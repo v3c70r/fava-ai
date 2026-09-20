@@ -174,3 +174,137 @@ def test_tool_exception_is_recorded_in_provenance():
     assert "kaboom" in tool_steps[0]["error"]
     # The failure is surfaced to the model rather than crashing the run.
     assert result["content"] == "recovered"
+
+
+# ── retries ───────────────────────────────────────────────────────
+
+
+class _FakeRateLimit(Exception):
+    status_code = 429
+
+
+class _FakeAuthError(Exception):
+    status_code = 401
+
+
+class FlakyProvider(BaseProvider):
+    def __init__(self, fail_times, exc):
+        self._fail_times = fail_times
+        self._exc = exc
+        self.calls = 0
+
+    @property
+    def provider_name(self):
+        return "flaky"
+
+    def chat(self, messages, tools=None, model=None, **kwargs):
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise self._exc
+        return ChatResponse(content="recovered")
+
+    def chat_stream(self, messages, tools=None, model=None, **kwargs):
+        yield from []
+
+    def list_models(self):
+        return []
+
+    def test_connection(self):
+        return True
+
+
+def test_transient_provider_error_is_retried(monkeypatch):
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    provider = FlakyProvider(fail_times=1, exc=_FakeRateLimit("slow down"))
+    agent = _make_agent(provider, config={"retries": 2, "max_iterations": 3})
+
+    result = agent.run("hi", provider_name="scripted")
+    assert result["content"] == "recovered"
+    assert provider.calls == 2
+
+
+def test_auth_error_is_not_retried(monkeypatch):
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    provider = FlakyProvider(fail_times=5, exc=_FakeAuthError("bad key"))
+    agent = _make_agent(provider, config={"retries": 3, "max_iterations": 3})
+
+    with pytest.raises(ProviderError, match="bad key"):
+        agent.run("hi", provider_name="scripted")
+    assert provider.calls == 1
+
+
+# ── tool result cap & parallel calls ──────────────────────────────
+
+
+class HugeTool(BaseTool):
+    @property
+    def name(self):
+        return "huge"
+
+    @property
+    def description(self):
+        return "returns a lot"
+
+    @property
+    def parameters(self):
+        return {"type": "object", "properties": {}}
+
+    def execute(self, **kwargs):
+        return ToolResult(content="x" * 20000, metadata={})
+
+
+def test_tool_result_is_capped_for_model():
+    provider = ScriptedProvider([
+        ChatResponse(tool_calls=[
+            LLMToolCall(id="1", function=FunctionCall(name="huge", arguments="{}"))
+        ]),
+        ChatResponse(content="done"),
+    ])
+    agent = _make_agent(
+        provider, tools=[HugeTool()],
+        config={"max_tool_result_chars": 100, "max_iterations": 3},
+    )
+
+    result = agent.run("hi", provider_name="scripted")
+    tool_message = next(m for m in result["messages"] if m.role == "tool")
+    assert len(tool_message.content) < 200
+    assert "truncated" in tool_message.content
+
+
+def test_parallel_tool_calls_all_execute():
+    class NamedTool(BaseTool):
+        def __init__(self, name):
+            self._name = name
+            self.calls = 0
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._name
+
+        @property
+        def parameters(self):
+            return {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            self.calls += 1
+            return ToolResult(content=f"{self._name} result", metadata={})
+
+    a, b = NamedTool("tool_a"), NamedTool("tool_b")
+    provider = ScriptedProvider([
+        ChatResponse(tool_calls=[
+            LLMToolCall(id="1", function=FunctionCall(name="tool_a", arguments="{}")),
+            LLMToolCall(id="2", function=FunctionCall(name="tool_b", arguments="{}")),
+        ]),
+        ChatResponse(content="both done"),
+    ])
+    agent = _make_agent(provider, tools=[a, b])
+
+    result = agent.run("hi", provider_name="scripted")
+    assert a.calls == 1 and b.calls == 1
+    tool_contents = [m.content for m in result["messages"] if m.role == "tool"]
+    assert "tool_a result" in tool_contents
+    assert "tool_b result" in tool_contents

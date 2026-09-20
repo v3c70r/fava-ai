@@ -12,6 +12,35 @@ class ContextBuilder:
     def set_prompt(self, prompt_id: str):
         self._prompt_id = prompt_id
 
+    def trim_history(self, messages, max_tokens: int):
+        """Trim conversation history to fit a token budget.
+
+        Keeps the most recent messages and never leaves an orphaned tool result
+        at the start (a tool message must follow its assistant tool-call turn).
+        Returns ``(kept_messages, omitted_count)``.
+        """
+        from fava_ai.agent.tokens import count_tokens
+
+        if not messages:
+            return [], 0
+        if max_tokens <= 0 or count_tokens(messages) <= max_tokens:
+            return list(messages), 0
+
+        kept: list = []
+        for message in reversed(messages):
+            candidate = [message, *kept]
+            if kept and count_tokens(candidate) > max_tokens:
+                break
+            kept = candidate
+
+        omitted = len(messages) - len(kept)
+        # Drop leading tool results whose assistant parent was trimmed away.
+        while kept and kept[0].role == "tool":
+            kept.pop(0)
+            omitted += 1
+
+        return kept, omitted
+
     def build_system_prompt(self, user_message: str | None = None, prompt_id: str | None = None) -> str:
         tools_desc = self._build_tools_description()
         ledger_info = self._get_ledger_summary()
