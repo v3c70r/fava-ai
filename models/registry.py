@@ -1,9 +1,38 @@
+import logging
+
+from fava_ai.config import KNOWN_PROVIDERS
 from fava_ai.models.anthropic import AnthropicProvider
 from fava_ai.models.base import BaseProvider
 from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.models.ollama import OllamaProvider
 from fava_ai.models.openai import OpenAIProvider
 from fava_ai.models.openai_compat import OpenAICompatProvider
+
+logger = logging.getLogger(__name__)
+
+
+def _construct_provider(ptype: str, cfg: dict) -> BaseProvider | None:
+    """Build a provider implementation from its type name and config."""
+    model = cfg.get("model", "")
+    if ptype == "ollama":
+        return OllamaProvider(
+            base_url=cfg.get("base_url", "http://localhost:11434"), model=model
+        )
+    if ptype == "openai":
+        return OpenAIProvider(api_key=cfg.get("api_key", ""), model=model)
+    if ptype == "anthropic":
+        return AnthropicProvider(api_key=cfg.get("api_key", ""), model=model)
+    if ptype == "deepseek":
+        return DeepSeekProvider(
+            api_key=cfg.get("api_key", ""), model=model or "deepseek-chat"
+        )
+    if ptype == "openai_compat":
+        return OpenAICompatProvider(
+            base_url=cfg.get("base_url", ""),
+            api_key=cfg.get("api_key", ""),
+            model=model,
+        )
+    return None
 
 
 class ProviderRegistry:
@@ -16,42 +45,24 @@ class ProviderRegistry:
     def _init_from_config(self):
         provider_config = self._config_manager.get_provider_config()
         for name, cfg in provider_config.items():
-            model = cfg.get("model", "")
-            if name == "ollama":
-                provider = OllamaProvider(
-                    base_url=cfg.get("base_url", "http://localhost:11434"),
-                    model=model,
+            # The name is an arbitrary alias; the implementation is chosen by
+            # `type` when present, otherwise by the name itself if it is a
+            # known provider.
+            ptype = cfg.get("type") or (name if name in KNOWN_PROVIDERS else None)
+            if ptype is None:
+                logger.error(
+                    "Ignoring provider '%s': unknown name and no 'type' field "
+                    "(known types: %s)",
+                    name, ", ".join(sorted(KNOWN_PROVIDERS)),
                 )
-            elif name == "openai":
-                provider = OpenAIProvider(
-                    api_key=cfg.get("api_key", ""),
-                    model=model,
+                continue
+            provider = _construct_provider(ptype, cfg)
+            if provider is None:
+                logger.error(
+                    "Ignoring provider '%s': unsupported type '%s'", name, ptype
                 )
-            elif name == "anthropic":
-                provider = AnthropicProvider(
-                    api_key=cfg.get("api_key", ""),
-                    model=model,
-                )
-            elif name == "deepseek":
-                provider = DeepSeekProvider(
-                    api_key=cfg.get("api_key", ""),
-                    model=model or "deepseek-chat",
-                )
-            elif name == "openai_compat":
-                provider = OpenAICompatProvider(
-                    base_url=cfg.get("base_url", ""),
-                    api_key=cfg.get("api_key", ""),
-                    model=model,
-                )
-            else:
                 continue
             self._providers[name] = provider
-
-        if not self._providers:
-            # No provider configured. get_default() returns None and the
-            # runtime raises NoProviderError with a helpful message, instead of
-            # silently trying (and failing) against localhost Ollama.
-            pass
 
     def get(self, name: str) -> BaseProvider | None:
         return self._providers.get(name)

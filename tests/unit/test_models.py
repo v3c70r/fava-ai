@@ -123,6 +123,43 @@ def test_provider_registry_empty_returns_none(tmp_dir):
     assert reg.list_providers() == []
 
 
+def test_provider_registry_alias_with_explicit_type(tmp_dir):
+    """Arbitrary provider names work when a `type` names the implementation."""
+    (tmp_dir / "config.yaml").write_text(
+        "providers:\n"
+        "  local:\n"
+        "    type: openai_compat\n"
+        "    base_url: http://localhost:8080/v1\n"
+        "    api_key: t\n"
+        "    model: m\n"
+    )
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {"provider": "local"}, tmp_dir)
+    reg = ProviderRegistry(cm)
+
+    provider = reg.get("local")
+    assert provider is not None
+    assert provider.provider_name == "openai_compat"
+    assert reg.get_default() is provider
+
+
+def test_provider_registry_unknown_name_without_type_is_logged(tmp_dir, caplog):
+    (tmp_dir / "config.yaml").write_text(
+        "providers:\n  mystery:\n    model: m\n"
+    )
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {}, tmp_dir)
+    with caplog.at_level("ERROR"):
+        reg = ProviderRegistry(cm)
+
+    assert reg.get("mystery") is None
+    assert any("mystery" in r.message for r in caplog.records)
+
+
 def test_provider_registry_connection_cache_invalidate():
     from fava_ai.config import ConfigManager
     from fava_ai.models.registry import ProviderRegistry

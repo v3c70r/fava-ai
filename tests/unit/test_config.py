@@ -12,7 +12,7 @@ def test_config_manager_defaults(tmp_dir):
     agent = cm.get_agent_config()
     assert agent["max_iterations"] == 10
     assert agent["max_tool_calls"] == 20
-    assert agent["timeout_seconds"] == 120
+    assert agent["timeout_seconds"] == 300
 
 
 def test_config_manager_beancount_config():

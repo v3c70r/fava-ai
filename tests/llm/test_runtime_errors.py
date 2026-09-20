@@ -187,6 +187,13 @@ class _FakeAuthError(Exception):
     status_code = 401
 
 
+class _FakeTimeout(Exception):
+    """Mimics litellm.Timeout (class name is what _is_timeout checks)."""
+
+
+_FakeTimeout.__name__ = "Timeout"
+
+
 class FlakyProvider(BaseProvider):
     def __init__(self, fail_times, exc):
         self._fail_times = fail_times
@@ -231,6 +238,48 @@ def test_auth_error_is_not_retried(monkeypatch):
     with pytest.raises(ProviderError, match="bad key"):
         agent.run("hi", provider_name="scripted")
     assert provider.calls == 1
+
+
+def test_timeout_is_not_retried_and_maps_to_504(monkeypatch):
+    """A read timeout must fail fast, not be retried (see eval findings)."""
+    from fava_ai.agent.errors import ProviderTimeoutError
+
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    provider = FlakyProvider(fail_times=5, exc=_FakeTimeout("too slow"))
+    agent = _make_agent(provider, config={"retries": 3, "max_iterations": 3})
+
+    with pytest.raises(ProviderTimeoutError) as excinfo:
+        agent.run("hi", provider_name="scripted")
+
+    assert excinfo.value.http_status == 504
+    assert provider.calls == 1  # no retries
+
+
+def test_deadline_exceeded_raises_timeout():
+    from fava_ai.agent.errors import ProviderTimeoutError
+
+    provider = FlakyProvider(fail_times=0, exc=RuntimeError("unused"))
+    agent = _make_agent(provider, config={"timeout_seconds": 1, "max_iterations": 3})
+    # Force the deadline into the past: the very first iteration must abort.
+    agent._limits.timeout_seconds = -1
+    with pytest.raises(ProviderTimeoutError):
+        agent.run("hi", provider_name="scripted")
+    assert provider.calls == 0
+
+
+def test_max_tokens_passed_to_provider():
+    captured = {}
+
+    class RecordingProvider(ScriptedProvider):
+        def chat(self, messages, tools=None, model=None, **kwargs):
+            captured.update(kwargs)
+            return ChatResponse(content="ok")
+
+    provider = RecordingProvider([])
+    agent = _make_agent(provider, config={"max_tokens": 256, "max_iterations": 2})
+    agent.run("hi", provider_name="scripted")
+
+    assert captured.get("max_tokens") == 256
 
 
 # ── tool result cap & parallel calls ──────────────────────────────

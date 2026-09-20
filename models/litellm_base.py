@@ -120,6 +120,7 @@ class LiteLLMProvider(BaseProvider):
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason,
             usage=usage,
+            reasoning=getattr(message, "reasoning_content", None),
         )
 
     def chat_stream(
@@ -152,7 +153,12 @@ class LiteLLMProvider(BaseProvider):
                 accumulator.add(delta.tool_calls)
             if getattr(choice, "finish_reason", None):
                 finish_reason = choice.finish_reason
-            if delta is not None and delta.content:
+            if delta is None:
+                continue
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                yield StreamChunk(reasoning=reasoning)
+            if delta.content:
                 yield StreamChunk(content=delta.content)
 
         tool_calls = accumulator.to_tool_calls()

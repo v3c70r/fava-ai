@@ -93,6 +93,7 @@ def test_chat_stream_passes_model_and_prompt(client, ext):
     [
         ("LimitExceeded", 429),
         ("ProviderError", 502),
+        ("ProviderTimeoutError", 504),
         ("EmptyResponseError", 502),
         ("NoProviderError", 503),
     ],
@@ -135,6 +136,21 @@ def test_chat_stream_error_frame(client, ext):
     frames = _parse_sse(resp.get_data(as_text=True))
     assert frames[-1]["type"] == "error"
     assert frames[-1]["error_type"] == "ProviderError"
+
+
+def test_chat_stream_forwards_reasoning_deltas(client, ext):
+    result = make_result()
+    ext._agent_runtime = StubRuntime(events=[
+        {"type": "reasoning_delta", "content": "Let me think"},
+        {"type": "content_delta", "content": "Answer"},
+        {"type": "done", "result": result},
+    ])
+    resp = client.post("/chat_stream", json={"message": "hello"})
+    frames = _parse_sse(resp.get_data(as_text=True))
+    types = [f["type"] for f in frames]
+    assert types[0] == "reasoning_delta"
+    assert frames[0]["content"] == "Let me think"
+    assert types[-1] == "done"
 
 
 # ── conversations ─────────────────────────────────────────────────

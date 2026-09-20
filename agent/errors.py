@@ -29,6 +29,16 @@ class ProviderError(AgentError):
     http_status = 502
 
 
+class ProviderTimeoutError(ProviderError):
+    """The provider did not answer within the time budget.
+
+    Distinct from :class:`LimitExceeded` so the UI can say "the model is too
+    slow" rather than reporting a rate limit.
+    """
+
+    http_status = 504
+
+
 class EmptyResponseError(AgentError):
     """The model returned neither content nor tool calls."""
 

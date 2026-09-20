@@ -96,6 +96,53 @@ def test_litellm_chat_stream_assembles_fragments(monkeypatch):
     assert final.tool_calls[0].function.arguments == '{"query": "x"}'
 
 
+def test_litellm_chat_stream_yields_reasoning_deltas(monkeypatch):
+    import fava_ai.models.litellm_base as base
+    from fava_ai.models.openai import OpenAIProvider
+
+    def _chunk(reasoning=None, content=None, finish_reason=None):
+        delta = SimpleNamespace(
+            content=content, tool_calls=None, reasoning_content=reasoning
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)]
+        )
+
+    monkeypatch.setattr(base.litellm, "completion", lambda **kw: iter([
+        _chunk(reasoning="Let me "),
+        _chunk(reasoning="think."),
+        _chunk(content="42"),
+        _chunk(finish_reason="stop"),
+    ]))
+
+    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    out = list(provider.chat_stream([Message(role="user", content="hi")]))
+
+    reasoning = "".join(c.reasoning for c in out if c.reasoning)
+    assert reasoning == "Let me think."
+    assert "".join(c.content for c in out if c.content) == "42"
+
+
+def test_litellm_chat_captures_reasoning(monkeypatch):
+    import fava_ai.models.litellm_base as base
+    from fava_ai.models.openai import OpenAIProvider
+
+    message = SimpleNamespace(
+        content="4", tool_calls=None, reasoning_content="2+2 is 4"
+    )
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=None,
+    )
+    monkeypatch.setattr(base.litellm, "completion", lambda **kw: response)
+
+    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    result = provider.chat([Message(role="user", content="2+2?")])
+
+    assert result.content == "4"
+    assert result.reasoning == "2+2 is 4"
+
+
 def test_litellm_chat_stream_yields_content_deltas(monkeypatch):
     import fava_ai.models.litellm_base as base
     from fava_ai.models.openai import OpenAIProvider
@@ -265,6 +312,24 @@ def test_run_stream_provider_error_wrapped():
     agent = _make_agent(BoomProvider([]))
     with pytest.raises(ProviderError, match="stream exploded"):
         list(agent.run_stream("hi", provider_name="stream"))
+
+
+def test_run_stream_emits_reasoning_deltas():
+    provider = StreamProvider([[
+        StreamChunk(reasoning="Let me think..."),
+        StreamChunk(content="Answer"),
+        StreamChunk(finish_reason="stop"),
+    ]])
+    agent = _make_agent(provider)
+
+    events = list(agent.run_stream("hi", provider_name="stream"))
+
+    assert events[0]["type"] == "reasoning_delta"
+    reasoning = "".join(
+        e["content"] for e in events if e["type"] == "reasoning_delta"
+    )
+    assert reasoning == "Let me think..."
+    assert events[-1]["type"] == "done"
 
 
 def test_run_stream_passes_model_and_prompt():

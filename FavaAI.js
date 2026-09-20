@@ -323,7 +323,9 @@ export default {
             return;
         }
 
-        if (event.type === 'content_delta') {
+        if (event.type === 'reasoning_delta') {
+            this.appendReasoning(this.currentAssistantEl, event.content || '');
+        } else if (event.type === 'content_delta') {
             this.currentAssistantText += event.content || '';
             this.setAssistantContent(this.currentAssistantEl, this.currentAssistantText);
         } else if (event.type === 'tool_call_start') {
@@ -356,6 +358,10 @@ export default {
     },
 
     setAssistantContent(el, text) {
+        // Collapse the reasoning block once the actual answer starts.
+        const reasoning = el.querySelector('.reasoning');
+        if (reasoning) reasoning.removeAttribute('open');
+
         let content = el.querySelector('.content');
         if (!content) {
             content = document.createElement('div');
@@ -363,6 +369,21 @@ export default {
             el.prepend(content);
         }
         content.innerHTML = this.md(text);
+        this.scrollToBottom();
+    },
+
+    appendReasoning(el, text) {
+        if (!text) return;
+        let details = el.querySelector('.reasoning');
+        if (!details) {
+            details = document.createElement('details');
+            details.className = 'reasoning';
+            details.setAttribute('open', '');
+            details.innerHTML = '<summary>Thinking\u2026</summary><div class="reasoning-text"></div>';
+            el.prepend(details);
+        }
+        // textContent: never interpret model output as HTML.
+        details.querySelector('.reasoning-text').textContent += text;
         this.scrollToBottom();
     },
 

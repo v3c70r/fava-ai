@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Reasoning-model support: `reasoning_content` is captured (`ChatResponse.reasoning`),
+  streamed as `reasoning_delta` SSE events, and shown as a collapsible "Thinking…"
+  block in the UI. On a local reasoning model this cut time-to-first-token from
+  ~7.0s to ~0.8s.
+- Provider aliases: any provider name is allowed when it declares a `type`
+  (e.g. `local: {type: openai_compat, ...}`); unknown names without a type are
+  logged instead of silently dropped.
+- `agent.max_tokens` to cap generated tokens per provider call.
+- `scripts/eval_local.py` to evaluate the agent stack against a live endpoint.
+
+### Fixed
+- Timeouts are now bounded: the remaining budget is recomputed before every retry,
+  read timeouts are no longer retried (previously a 45s budget could run 149s), and
+  timeouts surface as `ProviderTimeoutError` → HTTP 504 instead of `429 LimitExceeded`.
+
+### Changed
+- Default `agent.timeout_seconds` raised from 120 to 300 for slow local models.
+
 ## [0.2.0] - 2026-09-20
 
 Packaging, streaming, context management and knowledge-base performance release.
