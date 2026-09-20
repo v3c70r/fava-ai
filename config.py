@@ -8,7 +8,8 @@ DEFAULT_CONFIG: dict[str, dict] = {
     "agent": {
         "max_iterations": 10,
         "max_tool_calls": 20,
-        "timeout_seconds": 120,
+        # Slow local reasoning models on large ledgers can take minutes per answer.
+        "timeout_seconds": 300,
         "system_prompt": "default",
         "max_context_tokens": 12000,
         "max_tool_result_chars": 8000,
@@ -28,10 +29,10 @@ DEFAULT_CONFIG: dict[str, dict] = {
 KNOWN_PROVIDERS = {"ollama", "openai", "anthropic", "deepseek", "openai_compat"}
 
 _ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools"}
-_ALLOWED_PROVIDER_KEYS = {"api_key", "base_url", "model", "timeout", "test_connection_method"}
+_ALLOWED_PROVIDER_KEYS = {"type", "api_key", "base_url", "model", "timeout", "test_connection_method"}
 _ALLOWED_AGENT_KEYS = {
     "max_iterations", "max_tool_calls", "timeout_seconds", "system_prompt", "retries",
-    "max_context_tokens", "max_tool_result_chars",
+    "max_context_tokens", "max_tool_result_chars", "max_tokens",
 }
 _ALLOWED_KNOWLEDGE_KEYS = {"auto_extract"}
 _ALLOWED_TOOLS_KEYS = {"external_enabled"}
@@ -62,16 +63,27 @@ def validate_config(data) -> list[str]:
             errors.append("'providers' must be a mapping")
         else:
             for name, cfg in providers.items():
-                if name not in KNOWN_PROVIDERS:
-                    errors.append(f"unknown provider: '{name}'")
-                    continue
                 if not isinstance(cfg, dict):
                     errors.append(f"provider '{name}' must be a mapping")
                     continue
+                # Arbitrary aliases are allowed when an explicit 'type' names a
+                # known provider implementation.
+                ptype = cfg.get("type")
+                if name in KNOWN_PROVIDERS:
+                    if ptype is not None and ptype not in KNOWN_PROVIDERS:
+                        errors.append(f"provider '{name}' has invalid type: '{ptype}'")
+                elif ptype is None:
+                    errors.append(
+                        f"unknown provider '{name}': add a 'type' field "
+                        f"(one of {sorted(KNOWN_PROVIDERS)})"
+                    )
+                elif ptype not in KNOWN_PROVIDERS:
+                    errors.append(f"provider '{name}' has invalid type: '{ptype}'")
+
                 extra = set(cfg) - _ALLOWED_PROVIDER_KEYS
                 if extra:
                     errors.append(f"provider '{name}' has unknown keys: {sorted(extra)}")
-                for key in ("api_key", "base_url", "model"):
+                for key in ("type", "api_key", "base_url", "model"):
                     if key in cfg and not isinstance(cfg[key], str):
                         errors.append(f"provider '{name}.{key}' must be a string")
 
@@ -85,7 +97,7 @@ def validate_config(data) -> list[str]:
                 errors.append(f"'agent' has unknown keys: {sorted(extra)}")
             for key in (
                 "max_iterations", "max_tool_calls", "timeout_seconds", "retries",
-                "max_context_tokens", "max_tool_result_chars",
+                "max_context_tokens", "max_tool_result_chars", "max_tokens",
             ):
                 if key in agent and (not _is_int(agent[key]) or agent[key] < 1):
                     errors.append(f"'agent.{key}' must be a positive integer")

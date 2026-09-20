@@ -15,27 +15,36 @@ from fava_ai.agent.errors import (
     LimitExceeded,
     NoProviderError,
     ProviderError,
+    ProviderTimeoutError,
 )
 from fava_ai.agent.limits import ExecutionLimits
 from fava_ai.models.base import Message
 from fava_ai.provenance.tracker import ExecutionTracker
 
 #: Exception class names (from litellm / provider SDKs) worth retrying.
+#: Timeouts are deliberately excluded: retrying a slow generation just burns
+#: the remaining budget and multiplies latency.
 _RETRYABLE_ERROR_NAMES = {
     "RateLimitError",
     "APIConnectionError",
     "InternalServerError",
     "ServiceUnavailableError",
-    "Timeout",
-    "APITimeoutError",
 }
+
+_TIMEOUT_ERROR_NAMES = {"Timeout", "APITimeoutError"}
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    return type(exc).__name__ in _TIMEOUT_ERROR_NAMES or isinstance(exc, TimeoutError)
 
 
 def _is_retryable(exc: BaseException) -> bool:
     """Transient provider failures (rate limits, 5xx, connection) are retryable."""
+    if _is_timeout(exc):
+        return False
     if type(exc).__name__ in _RETRYABLE_ERROR_NAMES:
         return True
-    if isinstance(exc, (ConnectionError, TimeoutError)):
+    if isinstance(exc, ConnectionError):
         return True
     status = getattr(exc, "status_code", None)
     if isinstance(status, int):
@@ -62,6 +71,7 @@ class AgentRuntime:
             max_context_tokens=agent_config.get("max_context_tokens", 12000),
             max_tool_result_chars=agent_config.get("max_tool_result_chars", 8000),
             retries=agent_config.get("retries", 2),
+            max_tokens=agent_config.get("max_tokens"),
         )
 
     # ── setup helpers ─────────────────────────────────────────────
@@ -150,17 +160,37 @@ class AgentRuntime:
             return f"{content[:limit]}\n... [truncated {extra} chars]"
         return content
 
-    def _call_provider(self, provider, messages, tools, remaining, model):
-        """Call the provider, retrying transient failures as ProviderError."""
+    def _invoke_kwargs(self):
+        """Optional provider kwargs derived from execution limits."""
+        if self._limits.max_tokens:
+            return {"max_tokens": self._limits.max_tokens}
+        return {}
+
+    def _call_provider(self, provider, messages, tools, deadline, model):
+        """Call the provider within the deadline, retrying only transient failures.
+
+        ``deadline`` is an absolute ``time.time()`` value; the remaining budget
+        is recomputed before every attempt so retries cannot exceed it.
+        """
         attempts = max(1, self._limits.retries + 1)
         for attempt in range(attempts):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise ProviderTimeoutError(
+                    f"Model did not respond within {self._limits.timeout_seconds}s"
+                )
             try:
                 return provider.chat(
-                    messages, tools=tools, model=model, timeout=remaining
+                    messages, tools=tools, model=model,
+                    timeout=remaining, **self._invoke_kwargs(),
                 )
             except (LimitExceeded, ProviderError):
                 raise
             except Exception as e:  # noqa: BLE001 - normalise provider failures
+                if _is_timeout(e):
+                    raise ProviderTimeoutError(
+                        f"Model timed out after {self._limits.timeout_seconds}s"
+                    ) from e
                 if attempt == attempts - 1 or not _is_retryable(e):
                     raise ProviderError(f"Provider request failed: {e}") from e
                 time.sleep(min(2 ** attempt, 8))
@@ -185,15 +215,16 @@ class AgentRuntime:
 
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
-        start_time = time.time()
+        deadline = time.time() + self._limits.timeout_seconds
 
         for iteration in range(self._limits.max_iterations):
-            remaining = self._limits.timeout_seconds - (time.time() - start_time)
-            if remaining <= 0:
-                raise LimitExceeded("timeout")
+            if time.time() >= deadline:
+                raise ProviderTimeoutError(
+                    f"Model did not respond within {self._limits.timeout_seconds}s"
+                )
 
             tracker.record_plan(iteration)
-            response = self._call_provider(provider, messages, tools, remaining, model)
+            response = self._call_provider(provider, messages, tools, deadline, model)
 
             if response.has_tool_calls():
                 messages.append(response.as_message())
@@ -236,8 +267,9 @@ class AgentRuntime:
     ):
         """Yield UI events, ending with ``{"type": "done", "result": {...}}``.
 
-        Event types: ``content_delta``, ``tool_call_start``, ``tool_call``,
-        ``done``. Errors propagate as :class:`AgentError` for the caller to map.
+        Event types: ``reasoning_delta``, ``content_delta``, ``tool_call_start``,
+        ``tool_call``, ``done``. Errors propagate as :class:`AgentError` for the
+        caller to map.
         """
         provider = self._resolve_provider(provider_name)
         conversation_id = conversation_id or str(uuid.uuid4())
@@ -247,11 +279,13 @@ class AgentRuntime:
 
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
-        start_time = time.time()
+        deadline = time.time() + self._limits.timeout_seconds
 
         for iteration in range(self._limits.max_iterations):
-            if self._limits.timeout_seconds - (time.time() - start_time) <= 0:
-                raise LimitExceeded("timeout")
+            if time.time() >= deadline:
+                raise ProviderTimeoutError(
+                    f"Model did not respond within {self._limits.timeout_seconds}s"
+                )
 
             tracker.record_plan(iteration)
 
@@ -260,10 +294,20 @@ class AgentRuntime:
             attempts = max(1, self._limits.retries + 1)
             for attempt in range(attempts):
                 try:
-                    stream = provider.chat_stream(messages, tools=tools, model=model)
+                    stream = provider.chat_stream(
+                        messages, tools=tools, model=model, **self._invoke_kwargs()
+                    )
                     for chunk in stream:
-                        if self._limits.timeout_seconds - (time.time() - start_time) <= 0:
-                            raise LimitExceeded("timeout")
+                        if time.time() >= deadline:
+                            raise ProviderTimeoutError(
+                                "Model did not respond within "
+                                f"{self._limits.timeout_seconds}s"
+                            )
+                        if chunk.reasoning:
+                            yield {
+                                "type": "reasoning_delta",
+                                "content": chunk.reasoning,
+                            }
                         if chunk.content:
                             content_parts.append(chunk.content)
                             yield {"type": "content_delta", "content": chunk.content}
@@ -273,6 +317,10 @@ class AgentRuntime:
                 except (LimitExceeded, ProviderError):
                     raise
                 except Exception as e:  # noqa: BLE001 - normalise provider failures
+                    if _is_timeout(e):
+                        raise ProviderTimeoutError(
+                            f"Model timed out after {self._limits.timeout_seconds}s"
+                        ) from e
                     # Only retry if nothing has been streamed yet, otherwise we
                     # would duplicate already-rendered output.
                     if content_parts or attempt == attempts - 1 or not _is_retryable(e):

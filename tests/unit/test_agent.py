@@ -7,7 +7,7 @@ def test_execution_limits_defaults():
     limits = ExecutionLimits()
     assert limits.max_iterations == 10
     assert limits.max_tool_calls == 20
-    assert limits.timeout_seconds == 120
+    assert limits.timeout_seconds == 300
 
 
 def test_execution_limits_custom():

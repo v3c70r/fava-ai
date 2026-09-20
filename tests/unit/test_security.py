@@ -35,6 +35,22 @@ def test_validate_config_rejects_unknown_provider():
     assert any("unknown provider" in e for e in errors)
 
 
+def test_validate_config_allows_alias_with_type():
+    assert validate_config({
+        "providers": {"local": {"type": "openai_compat", "model": "m"}}
+    }) == []
+
+
+def test_validate_config_rejects_alias_without_type():
+    errors = validate_config({"providers": {"local": {"model": "m"}}})
+    assert any("unknown provider 'local'" in e for e in errors)
+
+
+def test_validate_config_rejects_invalid_type():
+    errors = validate_config({"providers": {"local": {"type": "nope"}}})
+    assert any("invalid type" in e for e in errors)
+
+
 def test_validate_config_rejects_unknown_provider_key():
     errors = validate_config({"providers": {"openai": {"shell": "rm -rf /"}}})
     assert any("unknown keys" in e for e in errors)

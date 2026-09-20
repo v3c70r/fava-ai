@@ -68,6 +68,9 @@ class ChatResponse:
     tool_calls: list[ToolCall] | None = None
     finish_reason: str | None = None
     usage: dict | None = None
+    #: Chain-of-thought text emitted by reasoning models (e.g. via
+    #: `reasoning_content`). Not part of the answer and never re-sent.
+    reasoning: str | None = None
 
     def has_tool_calls(self) -> bool:
         return bool(self.tool_calls)
@@ -85,6 +88,8 @@ class StreamChunk:
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
     finish_reason: str | None = None
+    #: Incremental reasoning text, if the model emits it.
+    reasoning: str | None = None
 
 
 class BaseProvider(ABC):
