@@ -44,6 +44,10 @@ jobs:
       - name: Tests
         run: pytest -q --cov=fava_ai --cov-report=term-missing --cov-report=xml
 
+      - name: Slow tests (perf smoke)
+        if: matrix.python-version == '3.12'
+        run: pytest -q -m slow
+
       - name: Upload coverage
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4

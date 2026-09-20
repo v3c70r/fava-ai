@@ -1,0 +1,58 @@
+;; Rich feature test ledger: multi-currency, cost basis, prices, tags, links.
+option "title" "Rich Features Test Ledger"
+option "operating_currency" "USD"
+
+2010-01-01 commodity USD
+2010-01-01 commodity EUR
+2010-01-01 commodity VTI
+
+2010-01-01 open Assets:Checking
+2010-01-01 open Assets:Euro
+2010-01-01 open Assets:Investments:VTI
+2010-01-01 open Equity:Opening-Balances
+2010-01-01 open Income:Salary
+2010-01-01 open Expenses:Food:Restaurant
+2010-01-01 open Expenses:Travel
+2010-01-01 open Expenses:Rent
+
+2010-01-02 * "Opening" "Initial balance"
+  Assets:Checking      10000.00 USD
+  Equity:Opening-Balances
+
+2010-01-05 * "Bank" "Buy euros"
+  Assets:Euro            500.00 EUR @ 1.10 USD
+  Assets:Checking
+
+2010-01-15 * "Employer" "Salary" #income ^payroll-2024
+  Assets:Checking       5000.00 USD
+  Income:Salary        -5000.00 USD
+
+2010-02-01 * "Landlord" "Monthly rent" #housing
+  Expenses:Rent         1500.00 USD
+  Assets:Checking      -1500.00 USD
+
+2010-02-05 * "Cafe Milano" "Lunch" #food ^trip-rome
+  Expenses:Food:Restaurant   25.00 EUR
+  Assets:Euro               -25.00 EUR
+
+2010-02-10 * "Airline" "Flight to Rome" #travel ^trip-rome
+  Expenses:Travel          300.00 EUR
+  Assets:Euro             -300.00 EUR
+
+2010-02-15 * "Broker" "Buy VTI"
+  Assets:Investments:VTI   10 VTI {150.00 USD}
+  Assets:Checking
+
+2010-03-01 * "Landlord" "Monthly rent" #housing
+  Expenses:Rent         1500.00 USD
+  Assets:Checking      -1500.00 USD
+
+2010-04-01 * "Landlord" "Monthly rent" #housing
+  Expenses:Rent         1500.00 USD
+  Assets:Checking      -1500.00 USD
+
+2010-05-01 * "Landlord" "Monthly rent" #housing
+  Expenses:Rent         1500.00 USD
+  Assets:Checking      -1500.00 USD
+
+2010-06-15 price VTI 170.00 USD

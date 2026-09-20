@@ -310,6 +310,7 @@ uv pip install -e ".[dev]"
 ruff check .
 mypy .
 pytest -q
+pytest -q -m slow   # performance smoke tests (excluded by default)
 pytest -q --cov=fava_ai --cov-report=term-missing
 
 # Run with a test fixture
