@@ -68,7 +68,7 @@ class WikiReadTool(BaseTool):
         if not self._wiki.exists(path):
             return ToolResult(
                 content=json.dumps({"error": f"Page not found: {path}"}),
-                metadata={"path": path, "found": False},
+                metadata={"path": path, "found": False, "error": f"Page not found: {path}"},
             )
         page = self._wiki.read(path)
         return ToolResult(

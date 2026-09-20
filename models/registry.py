@@ -48,10 +48,24 @@ class ProviderRegistry:
             self._providers[name] = provider
 
         if not self._providers:
-            self._providers["ollama"] = OllamaProvider()
+            # No provider configured. get_default() returns None and the
+            # runtime raises NoProviderError with a helpful message, instead of
+            # silently trying (and failing) against localhost Ollama.
+            pass
 
     def get(self, name: str) -> BaseProvider | None:
         return self._providers.get(name)
+
+    def invalidate(self, name: str | None = None):
+        """Drop cached connection status, for one provider or all of them."""
+        if name is None:
+            self._connection_cache.clear()
+        else:
+            self._connection_cache.pop(name, None)
+
+    def set_connection(self, name: str, connected: bool) -> None:
+        """Record a freshly observed connection status for a provider."""
+        self._connection_cache[name] = bool(connected)
 
     def get_default(self) -> BaseProvider | None:
         bc = self._config_manager._extension_config

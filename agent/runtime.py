@@ -3,7 +3,13 @@
 import time
 import uuid
 
-from fava_ai.agent.limits import ExecutionLimits, LimitExceeded
+from fava_ai.agent.errors import (
+    EmptyResponseError,
+    LimitExceeded,
+    NoProviderError,
+    ProviderError,
+)
+from fava_ai.agent.limits import ExecutionLimits
 from fava_ai.models.base import Message
 from fava_ai.provenance.tracker import ExecutionTracker
 
@@ -26,6 +32,38 @@ class AgentRuntime:
             timeout_seconds=agent_config.get("timeout_seconds", 120),
         )
 
+    def _resolve_provider(self, provider_name: str | None):
+        if provider_name:
+            provider = self._provider_registry.get(provider_name)
+            if provider is None:
+                raise NoProviderError(
+                    f"Unknown provider '{provider_name}'. "
+                    "Check the 'providers' section of .fava-ai/config.yaml."
+                )
+            return provider
+        provider = self._provider_registry.get_default()
+        if provider is None:
+            raise NoProviderError(
+                "No LLM provider configured. Add one to .fava-ai/config.yaml "
+                "(see README for examples)."
+            )
+        return provider
+
+    def _call_provider(self, provider, messages, tools, remaining):
+        """Call the provider, translating unexpected failures into ProviderError."""
+        try:
+            try:
+                return provider.chat(messages, tools=tools, timeout=remaining)
+            except TypeError:
+                # Provider doesn't accept a timeout kwarg.
+                return provider.chat(messages, tools=tools)
+        except LimitExceeded:
+            raise
+        except ProviderError:
+            raise
+        except Exception as e:  # noqa: BLE001 - normalise provider failures
+            raise ProviderError(f"Provider request failed: {e}") from e
+
     def run(
         self,
         user_message: str,
@@ -33,19 +71,13 @@ class AgentRuntime:
         messages: list[Message] | None = None,
         provider_name: str | None = None,
     ) -> dict:
-        provider = None
-        if provider_name:
-            provider = self._provider_registry.get(provider_name)
-        if not provider:
-            provider = self._provider_registry.get_default()
-        if not provider:
-            raise RuntimeError("No provider configured")
+        provider = self._resolve_provider(provider_name)
 
         conversation_id = conversation_id or str(uuid.uuid4())
 
         tracker = ExecutionTracker()
 
-        # Always inject system prompt (it's never persisted to DB)
+        # Always inject the system prompt (it's never persisted to the DB).
         if messages is None:
             messages = []
         system_prompt = self._context_builder.build_system_prompt(user_message)
@@ -66,11 +98,7 @@ class AgentRuntime:
 
             tracker.record_plan(iteration)
 
-            try:
-                response = provider.chat(messages, tools=tools, timeout=remaining)
-            except TypeError:
-                # Provider doesn't accept timeout kwarg
-                response = provider.chat(messages, tools=tools)
+            response = self._call_provider(provider, messages, tools, remaining)
 
             if response.has_tool_calls():
                 messages.append(response.as_message())
@@ -85,8 +113,12 @@ class AgentRuntime:
                     try:
                         result = self._tool_registry.execute(tc)
                         result_content = result.content
+                        # Tools report handled failures via metadata["error"]
+                        # instead of raising (e.g. BQL syntax errors).
                         result_error = None
-                    except Exception as e:
+                        if result.metadata and result.metadata.get("error"):
+                            result_error = str(result.metadata["error"])
+                    except Exception as e:  # noqa: BLE001 - surface tool errors to the model
                         result_content = f"Tool error: {e}"
                         result_error = str(e)
 
@@ -105,8 +137,9 @@ class AgentRuntime:
                         name=tool_name,
                     ))
 
-            elif response.content is not None:
+            elif response.content:
                 tracker.record_synthesis(iteration)
+                messages.append(response.as_message())
 
                 return {
                     "conversation_id": conversation_id,
@@ -120,6 +153,9 @@ class AgentRuntime:
                 }
 
             else:
-                break
+                raise EmptyResponseError(
+                    "The model returned an empty response "
+                    "(no content and no tool calls)."
+                )
 
         raise LimitExceeded("max_iterations")

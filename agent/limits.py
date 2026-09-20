@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
+from fava_ai.agent.errors import LimitExceeded
 
-class LimitExceeded(Exception):
-    pass
+__all__ = ["ExecutionLimits", "LimitExceeded"]
 
 
 @dataclass

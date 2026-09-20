@@ -160,7 +160,7 @@ export default {
 
             loadingEl.remove();
 
-            this.addMessage('assistant', result.content, result.provenance);
+            this.addMessage('assistant', result.content, result.provenance, result.message_id);
 
             this.activeConvId = result.conversation_id;
             await this.loadConversations();
@@ -174,44 +174,60 @@ export default {
         }
     },
 
-    addMessage(role, content, provenance) {
+    renderProvenance(toolSteps) {
+        if (!toolSteps || toolSteps.length === 0) return '';
+        let html = '<div class="provenance-footer">';
+        for (const step of toolSteps) {
+            let inputDisplay = '';
+            try {
+                inputDisplay = JSON.stringify(JSON.parse(step.tool_input || '{}'), null, 2);
+            } catch {
+                inputDisplay = step.tool_input || '';
+            }
+            html += `
+                <div class="tool-call-card">
+                    <details>
+                        <summary>Tool: ${this.esc(step.tool_name)}</summary>
+                        <div class="tool-detail">
+                            <strong>Input:</strong>
+                            <pre>${this.esc(inputDisplay)}</pre>
+                            ${step.error ? `<strong>Error:</strong> <pre>${this.esc(step.error)}</pre>` : ''}
+                        </div>
+                    </details>
+                </div>`;
+        }
+        html += '</div>';
+        return html;
+    },
+
+    addMessage(role, content, provenance, messageId) {
         const div = document.createElement('div');
         div.className = `message ${role}`;
+        if (messageId) div.dataset.messageId = messageId;
 
-        let html = '';
-
-        html += `<div class="content">${this.md(content)}</div>`;
+        let html = `<div class="content">${this.md(content)}</div>`;
 
         if (provenance && provenance.steps) {
-            const toolSteps = provenance.steps.filter(s => s.step_type === 'tool_call');
-            if (toolSteps.length > 0) {
-                html += '<div class="provenance-footer">';
-                for (const step of toolSteps) {
-                    let inputDisplay = '';
-                    try {
-                        inputDisplay = JSON.stringify(JSON.parse(step.tool_input || '{}'), null, 2);
-                    } catch {
-                        inputDisplay = step.tool_input || '';
-                    }
-                    html += `
-                        <div class="tool-call-card">
-                            <details>
-                                <summary>Tool: ${this.esc(step.tool_name)}</summary>
-                                <div class="tool-detail">
-                                    <strong>Input:</strong>
-                                    <pre>${this.esc(inputDisplay)}</pre>
-                                    ${step.error ? `<strong>Error:</strong> <pre>${this.esc(step.error)}</pre>` : ''}
-                                </div>
-                            </details>
-                        </div>`;
-                }
-                html += '</div>';
-            }
+            html += this.renderProvenance(
+                provenance.steps.filter(s => s.step_type === 'tool_call')
+            );
         }
 
         div.innerHTML = html;
         this.el.messages.appendChild(div);
         this.el.messages.scrollTop = this.el.messages.scrollHeight;
+        return div;
+    },
+
+    async loadTraces(messageId, messageEl) {
+        try {
+            const steps = await this.api('GET', 'traces', null, { message_id: messageId });
+            const toolSteps = (steps || []).filter(s => s.step_type === 'tool_call');
+            if (toolSteps.length === 0) return;
+            messageEl.insertAdjacentHTML('beforeend', this.renderProvenance(toolSteps));
+        } catch (e) {
+            console.error('Failed to load traces:', e);
+        }
     },
 
     addLoading() {
@@ -226,10 +242,27 @@ export default {
     renderMessages(messages) {
         this.el.messages.innerHTML = '';
         for (const msg of messages) {
-            if (msg.role === 'system') continue;
-            this.addMessage(msg.role, msg.content, null);
+            // Skip system prompts, raw tool results, and intermediate
+            // assistant turns that only carry tool calls.
+            if (msg.role === 'system' || msg.role === 'tool') continue;
+            if (msg.role === 'assistant' && this.hasToolCalls(msg)) continue;
+
+            const el = this.addMessage(msg.role, msg.content, null, msg.id);
+            if (msg.role === 'assistant' && msg.id) {
+                this.loadTraces(msg.id, el);
+            }
         }
         this.el.messages.scrollTop = this.el.messages.scrollHeight;
+    },
+
+    hasToolCalls(msg) {
+        if (!msg.tool_calls) return false;
+        try {
+            const tcs = JSON.parse(msg.tool_calls);
+            return Array.isArray(tcs) && tcs.length > 0;
+        } catch {
+            return false;
+        }
     },
 
     async loadProviders() {
