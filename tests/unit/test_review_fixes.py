@@ -1,12 +1,11 @@
 """Tests for security and correctness fixes from code review."""
-import pytest
 from pathlib import Path
 
+import pytest
 from fava_ai.knowledge.wiki import WikiManager
-from fava_ai.storage.database import Database
-from fava_ai.storage.conversations import create_conversation, save_message, load_messages
 from fava_ai.models.base import Message
-
+from fava_ai.storage.conversations import create_conversation, load_messages, save_message
+from fava_ai.storage.database import Database
 
 # ── Path traversal protection ──────────────────────────────────
 
@@ -103,8 +102,8 @@ class TestMessageDedup:
 class TestProviderConnectionCache:
     def test_connection_cached(self):
         from fava_ai.config import ConfigManager
-        from fava_ai.models.registry import ProviderRegistry
         from fava_ai.models.base import BaseProvider, ChatResponse, Message
+        from fava_ai.models.registry import ProviderRegistry
 
         class CountingProvider(BaseProvider):
             def __init__(self):
@@ -137,12 +136,12 @@ class TestProviderConnectionCache:
 
 class TestMerchantsExpenseOnly:
     def test_only_expenses_counted(self, tmp_path, sample_entries):
-        from fava_ai.knowledge.wiki import WikiManager
         from fava_ai.knowledge.extractors.merchants import MerchantExtractor
+        from fava_ai.knowledge.wiki import WikiManager
 
         wiki = WikiManager(tmp_path / "wiki")
         extractor = MerchantExtractor(wiki)
-        stats = extractor.extract(sample_entries, {"operating_currency": ["USD"]})
+        extractor.extract(sample_entries, {"operating_currency": ["USD"]})
 
         # Amazon has 3 expense postings, all in Expenses:Shopping
         # total_spent should be 42.97 + 89.99 + 120.00 = 252.96

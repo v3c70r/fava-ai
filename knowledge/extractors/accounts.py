@@ -1,7 +1,6 @@
 """Account graph extractor — generates wiki/accounts/*.md."""
 
 from beancount.core import realization
-
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
 
 

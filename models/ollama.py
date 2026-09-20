@@ -1,7 +1,6 @@
 """Ollama provider via litellm."""
 
 import requests
-
 from fava_ai.models.litellm_base import LiteLLMProvider
 
 

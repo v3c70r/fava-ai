@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -98,7 +98,6 @@ class ExecutionTracker:
         lines = []
         tools_used = set()
         bql_queries = []
-        wiki_pages = []
 
         for s in self.steps:
             if s.step_type == "tool_call" and s.tool_name and not s.error:

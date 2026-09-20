@@ -1,15 +1,15 @@
 """Layer 4: LLM interaction tests with mock provider."""
-import pytest
 import json
 
+import pytest
+from fava_ai.agent.limits import ExecutionLimits, LimitExceeded
 from fava_ai.models.base import (
     BaseProvider,
-    Message,
     ChatResponse,
-    ToolCall,
     FunctionCall,
+    Message,
+    ToolCall,
 )
-from fava_ai.agent.limits import ExecutionLimits, LimitExceeded
 
 
 class MockProvider(BaseProvider):
@@ -17,7 +17,7 @@ class MockProvider(BaseProvider):
     def __init__(self, responses: list[ChatResponse]):
         self.responses = responses
         self.call_index = 0
-        self.calls = []
+        self.calls: list[dict] = []
         self._name = "mock"
 
     @property
@@ -43,12 +43,13 @@ class MockProvider(BaseProvider):
 
 
 def test_agent_single_step():
-    from fava_ai.agent.runtime import AgentRuntime
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
-    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.agent.runtime import AgentRuntime
     from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
     from tests.conftest import MockLedger
 
     provider = MockProvider([
@@ -78,14 +79,14 @@ def test_agent_single_step():
 
 
 def test_agent_tool_calling_loop():
-    from fava_ai.agent.runtime import AgentRuntime
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
-    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.agent.runtime import AgentRuntime
     from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.tools.builtin.ledger import LedgerInfoTool, register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
     from tests.conftest import MockLedger
-    from fava_ai.tools.builtin.ledger import LedgerInfoTool
 
     provider = MockProvider([
         ChatResponse(tool_calls=[
@@ -120,12 +121,13 @@ def test_agent_tool_calling_loop():
 
 
 def test_agent_max_iterations():
-    from fava_ai.agent.runtime import AgentRuntime
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
-    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.agent.runtime import AgentRuntime
     from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
     from tests.conftest import MockLedger
 
     provider = MockProvider([
@@ -158,14 +160,15 @@ def test_agent_max_iterations():
 
 
 def test_agent_tool_error_handling():
-    from fava_ai.agent.runtime import AgentRuntime
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
-    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.agent.runtime import AgentRuntime
     from fava_ai.config import ConfigManager
-    from tests.conftest import MockLedger
+    from fava_ai.models.registry import ProviderRegistry
     from fava_ai.tools.base import BaseTool, ToolResult
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
 
     class AlwaysErrorTool(BaseTool):
         name = "error_tool"
@@ -206,13 +209,15 @@ def test_agent_tool_error_handling():
 
 
 def test_context_builder_with_kb_injection():
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    import tempfile
+    from pathlib import Path
+
     from fava_ai.agent.context import ContextBuilder
     from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
     from tests.conftest import MockLedger
-    from pathlib import Path
-    import tempfile
 
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
@@ -232,16 +237,17 @@ def test_context_builder_with_kb_injection():
 
 
 def test_agent_no_provider():
-    from fava_ai.agent.runtime import AgentRuntime
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.agent.context import ContextBuilder
-    from fava_ai.models.registry import ProviderRegistry
-    from fava_ai.config import ConfigManager
-    from tests.conftest import MockLedger
-    from pathlib import Path
-
     # Register a mock provider but with no default; require explicit provider_name
     import tempfile
+    from pathlib import Path
+
+    from fava_ai.agent.context import ContextBuilder
+    from fava_ai.agent.runtime import AgentRuntime
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
     with tempfile.TemporaryDirectory() as d:
         cm = ConfigManager(None, {"provider": "mock"}, Path(d))
         reg = ProviderRegistry(cm)

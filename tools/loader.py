@@ -29,7 +29,7 @@ def load_external_tools(tools_dir: Path) -> list[BaseTool]:
 
         tools = [MarketPriceTool()]
     """
-    tools = []
+    tools: list[BaseTool] = []
     if not tools_dir.exists():
         return tools
 

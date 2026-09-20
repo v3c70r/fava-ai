@@ -1,8 +1,8 @@
 """Unit tests for tools/ modules."""
 import json
-import pytest
 
-from fava_ai.tools.base import ToolDefinition, ToolResult, ToolError, BaseTool
+import pytest
+from fava_ai.tools.base import BaseTool, ToolDefinition, ToolError, ToolResult
 from fava_ai.tools.registry import ToolRegistry
 
 
@@ -94,7 +94,7 @@ def test_registry_execute():
     reg = ToolRegistry()
     reg.register(FakeTool())
 
-    from fava_ai.models.base import ToolCall, FunctionCall
+    from fava_ai.models.base import FunctionCall, ToolCall
     tc = ToolCall(id="1", function=FunctionCall(name="fake_tool", arguments='{"x": 5}'))
     result = reg.execute(tc)
     assert result.content == "result: 10"
@@ -103,7 +103,7 @@ def test_registry_execute():
 
 def test_registry_execute_not_found():
     reg = ToolRegistry()
-    from fava_ai.models.base import ToolCall, FunctionCall
+    from fava_ai.models.base import FunctionCall, ToolCall
     tc = ToolCall(id="1", function=FunctionCall(name="nonexistent", arguments="{}"))
     with pytest.raises(ToolError, match="Tool not found"):
         reg.execute(tc)
@@ -112,7 +112,7 @@ def test_registry_execute_not_found():
 def test_registry_execute_bad_args():
     reg = ToolRegistry()
     reg.register(FakeTool())
-    from fava_ai.models.base import ToolCall, FunctionCall
+    from fava_ai.models.base import FunctionCall, ToolCall
     tc = ToolCall(id="1", function=FunctionCall(name="fake_tool", arguments="not json"))
     with pytest.raises(ToolError, match="Invalid tool arguments"):
         reg.execute(tc)
@@ -159,11 +159,12 @@ def test_wiki_write_rejects_traversal(tmp_path):
 
 
 def test_wiki_tools_registration_count():
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.tools.builtin.wiki import register_wiki_tools
     import tempfile
     from pathlib import Path
+
+    from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.wiki import register_wiki_tools
+    from fava_ai.tools.registry import ToolRegistry
 
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))

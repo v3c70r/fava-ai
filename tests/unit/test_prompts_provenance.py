@@ -1,7 +1,7 @@
 """Unit tests for prompts/ and provenance/ modules."""
-import pytest
 from pathlib import Path
 
+import pytest
 from fava_ai.prompts.registry import PromptRegistry
 from fava_ai.provenance.tracker import ExecutionTracker, ProvenanceStep
 

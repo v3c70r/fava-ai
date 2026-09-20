@@ -1,21 +1,23 @@
 """Test the Fava AI agent with DeepSeek API against beancount fixtures.
 
 Requires DEEPSEEK_API_KEY environment variable.
-Usage: python3 test_deepseek.py
+Usage: python3 scripts/test_deepseek.py
 """
-import sys
 import os
+import sys
 
 if not os.environ.get("DEEPSEEK_API_KEY"):
     print("Error: set DEEPSEEK_API_KEY env var first")
     sys.exit(1)
 
-sys.path.insert(0, os.path.dirname(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
 
 from pathlib import Path
+
 from beancount import loader
 
-fixtures_dir = Path(__file__).parent / "tests" / "fixtures" / "ledgers"
+fixtures_dir = Path(REPO_ROOT) / "tests" / "data" / "ledgers"
 example_file = fixtures_dir / "beancount-example.beancount"
 
 print(f"Loading ledger: {example_file}")
@@ -34,19 +36,20 @@ class MockLedger:
 
 ledger = MockLedger()
 
-from fava_ai.config import ConfigManager
-from fava_ai.storage.database import Database
-from fava_ai.models.registry import ProviderRegistry
-from fava_ai.models.deepseek import DeepSeekProvider
-from fava_ai.tools.registry import ToolRegistry
-from fava_ai.tools.builtin.ledger import register_ledger_tools
-from fava_ai.agent.runtime import AgentRuntime
 from fava_ai.agent.context import ContextBuilder
+from fava_ai.agent.runtime import AgentRuntime
+from fava_ai.config import ConfigManager
+from fava_ai.models.deepseek import DeepSeekProvider
+from fava_ai.models.registry import ProviderRegistry
+from fava_ai.storage.database import Database
+from fava_ai.tools.builtin.ledger import register_ledger_tools
+from fava_ai.tools.registry import ToolRegistry
 
 config_dir = Path("/tmp/fava-ai-test")
 config_dir.mkdir(parents=True, exist_ok=True)
 
 import yaml
+
 config_yaml = {
     "providers": {
         "deepseek": {

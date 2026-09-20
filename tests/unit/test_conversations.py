@@ -1,17 +1,16 @@
 """Unit tests for conversations storage."""
 import pytest
-
-from fava_ai.storage.database import Database
+from fava_ai.models.base import Message
 from fava_ai.storage.conversations import (
     create_conversation,
-    list_conversations,
-    get_conversation,
     delete_conversation,
-    save_message,
+    get_conversation,
+    list_conversations,
     load_messages,
+    save_message,
     update_title,
 )
-from fava_ai.models.base import Message
+from fava_ai.storage.database import Database
 
 
 @pytest.fixture
@@ -89,7 +88,7 @@ def test_save_and_load_messages(db):
 
 
 def test_save_message_with_tool_calls(db):
-    from fava_ai.models.base import ToolCall, FunctionCall
+    from fava_ai.models.base import FunctionCall, ToolCall
 
     conv = create_conversation(db, "Test", "ollama", "llama3")
     msg = Message(

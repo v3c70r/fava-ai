@@ -1,15 +1,13 @@
 """KnowledgeEngine — orchestrates extraction to wiki on ledger load."""
 
 import hashlib
-import json
-from pathlib import Path
 
-from fava_ai.knowledge.wiki import WikiManager
 from fava_ai.knowledge.extractors.accounts import AccountExtractor
 from fava_ai.knowledge.extractors.merchants import MerchantExtractor
-from fava_ai.knowledge.extractors.recurring import RecurringExtractor
 from fava_ai.knowledge.extractors.portfolio import PortfolioExtractor
-from fava_ai.knowledge.extractors.spending import SpendingExtractor, CashflowExtractor
+from fava_ai.knowledge.extractors.recurring import RecurringExtractor
+from fava_ai.knowledge.extractors.spending import CashflowExtractor, SpendingExtractor
+from fava_ai.knowledge.wiki import WikiManager
 
 
 class KnowledgeEngine:
@@ -103,7 +101,7 @@ class KnowledgeEngine:
             "- [[patterns/spending.md|Spending]] — Spending patterns by category",
             "- [[patterns/cashflow.md|Cashflow]] — Monthly income vs expenses",
             "",
-            f"*Generated: auto*",
+            "*Generated: auto*",
         ])
 
         overview = self.wiki.wiki_dir / "overview.md"

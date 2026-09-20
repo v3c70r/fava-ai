@@ -1,6 +1,5 @@
 """Unit tests for agent/ modules."""
 import pytest
-
 from fava_ai.agent.limits import ExecutionLimits, LimitExceeded
 
 
@@ -24,10 +23,11 @@ def test_limit_exceeded():
 
 
 def test_context_builder(sample_entries):
-    from tests.conftest import MockLedger
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
 
     ledger = MockLedger(sample_entries, {"operating_currency": ["USD"]})
     reg = ToolRegistry()
@@ -42,11 +42,12 @@ def test_context_builder(sample_entries):
 
 
 def test_context_builder_with_wiki(sample_entries, tmp_path):
-    from tests.conftest import MockLedger
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
-    from fava_ai.knowledge.wiki import WikiManager
     from fava_ai.agent.context import ContextBuilder
+    from fava_ai.knowledge.wiki import WikiManager
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
 
     wiki = WikiManager(tmp_path / "wiki")
     wiki.write(
@@ -66,10 +67,11 @@ def test_context_builder_with_wiki(sample_entries, tmp_path):
 
 
 def test_context_builder_no_wiki(sample_entries):
-    from tests.conftest import MockLedger
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
 
     ledger = MockLedger(sample_entries, {"operating_currency": ["USD"]})
     reg = ToolRegistry()
@@ -81,11 +83,12 @@ def test_context_builder_no_wiki(sample_entries):
 
 
 def test_context_builder_with_prompt_registry(sample_entries):
-    from tests.conftest import MockLedger
-    from fava_ai.tools.registry import ToolRegistry
-    from fava_ai.tools.builtin.ledger import register_ledger_tools
     from fava_ai.agent.context import ContextBuilder
     from fava_ai.prompts.registry import PromptRegistry
+    from fava_ai.tools.builtin.ledger import register_ledger_tools
+    from fava_ai.tools.registry import ToolRegistry
+
+    from tests.conftest import MockLedger
 
     ledger = MockLedger(sample_entries, {"operating_currency": ["USD"]})
     reg = ToolRegistry()

@@ -1,8 +1,7 @@
 import json
 import logging
-import traceback
 
-from fava_ai.tools.base import BaseTool, ToolDefinition, ToolResult, ToolError
+from fava_ai.tools.base import BaseTool, ToolError, ToolResult
 
 logger = logging.getLogger(__name__)
 

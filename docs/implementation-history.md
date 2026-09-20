@@ -1,5 +1,10 @@
 # Fava AI Agent Platform — Implementation Plan
 
+> **Historical document.** Paths below reflect the original plan. The repo was later
+> reorganised: fixture data now lives in `tests/data/ledgers/`, analysis scripts moved to
+> `scripts/`, and external sample ledgers are fetched via `scripts/fetch_sample_ledgers.sh`
+> (see `IMPROVEMENT_PLAN.md` and `CHANGELOG.md`).
+
 > **Context:** This is a self-contained implementation plan. A fresh session should be able to read this and start building.
 
 ---

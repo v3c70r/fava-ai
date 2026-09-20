@@ -1,14 +1,17 @@
 """Fava AI Agent Platform — AI assistant for Beancount/Fava."""
+# mypy: disable-error-code="arg-type"
 
 import json
 import traceback
 from pathlib import Path
-
-from flask import request, jsonify, Response, stream_with_context, render_template_string
+from typing import Any
 
 from fava.ext import FavaExtensionBase, extension_endpoint
 from fava_ai._version import __version__
 from fava_ai.agent.limits import LimitExceeded
+from flask import Response, jsonify, request, stream_with_context
+
+__all__ = ["FavaAI", "__version__"]
 
 
 class FavaAI(FavaExtensionBase):
@@ -23,26 +26,26 @@ class FavaAI(FavaExtensionBase):
         self.config_dir = self.ledger_dir / (self.config.get("config_dir", ".fava-ai") if self.config else ".fava-ai")
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
-        self._config_manager = None
-        self._db = None
-        self._provider_registry = None
-        self._tool_registry = None
-        self._wiki_manager = None
-        self._knowledge_engine = None
-        self._prompt_registry = None
-        self._agent_runtime = None
+        self._config_manager: Any = None
+        self._db: Any = None
+        self._provider_registry: Any = None
+        self._tool_registry: Any = None
+        self._wiki_manager: Any = None
+        self._knowledge_engine: Any = None
+        self._prompt_registry: Any = None
+        self._agent_runtime: Any = None
 
         self._init_components()
 
     def _init_components(self):
         from fava_ai.config import ConfigManager
-        from fava_ai.storage.database import Database
+        from fava_ai.knowledge.engine import KnowledgeEngine
+        from fava_ai.knowledge.wiki import WikiManager
         from fava_ai.models.registry import ProviderRegistry
-        from fava_ai.tools.registry import ToolRegistry
+        from fava_ai.storage.database import Database
         from fava_ai.tools.builtin.ledger import register_ledger_tools
         from fava_ai.tools.builtin.wiki import register_wiki_tools
-        from fava_ai.knowledge.wiki import WikiManager
-        from fava_ai.knowledge.engine import KnowledgeEngine
+        from fava_ai.tools.registry import ToolRegistry
 
         self._config_manager = ConfigManager(
             self.ledger, self.config or {}, self.config_dir
@@ -77,8 +80,8 @@ class FavaAI(FavaExtensionBase):
         from fava_ai.prompts.registry import PromptRegistry
         self._prompt_registry = PromptRegistry(self.config_dir)
 
-        from fava_ai.agent.runtime import AgentRuntime
         from fava_ai.agent.context import ContextBuilder
+        from fava_ai.agent.runtime import AgentRuntime
 
         context_builder = ContextBuilder(
             self.ledger, self._tool_registry, self._wiki_manager,
@@ -141,7 +144,9 @@ class FavaAI(FavaExtensionBase):
             conv_id = result["conversation_id"]
             if self._db:
                 from fava_ai.storage.conversations import (
-                    create_conversation, save_message, update_title,
+                    create_conversation,
+                    save_message,
+                    update_title,
                 )
                 if not conversation_id:
                     provider = provider_name or (
@@ -222,7 +227,7 @@ class FavaAI(FavaExtensionBase):
         if not self._db:
             return jsonify([])
         conv_id = request.args.get("id")
-        from fava_ai.storage.conversations import list_conversations, get_conversation, delete_conversation
+        from fava_ai.storage.conversations import get_conversation, list_conversations
         if conv_id:
             if request.method == "GET":
                 conv = get_conversation(self._db, conv_id)

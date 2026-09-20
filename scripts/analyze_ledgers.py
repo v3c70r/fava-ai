@@ -3,16 +3,20 @@
 
 import os
 import sys
-from pathlib import Path
 from collections import Counter, defaultdict
 from datetime import date
+from pathlib import Path
 
 from beancount import loader
 from beancount.core import data, getters
-from beancount.core.data import Transaction, Open, Close, Commodity, Note, Document
+from beancount.core.data import Close, Commodity, Document, Note, Open, Transaction
 from beancount.core.number import D
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "ledgers"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# External sample ledgers are cloned here by scripts/fetch_sample_ledgers.sh.
+# Override with FAVA_AI_SAMPLE_LEDGERS=/path/to/dir
+FIXTURES_DIR = Path(os.environ.get("FAVA_AI_SAMPLE_LEDGERS", REPO_ROOT / ".sample-ledgers"))
+BUILTIN_LEDGER = REPO_ROOT / "tests" / "data" / "ledgers" / "beancount-example.beancount"
 
 # Maps cloned dirs to their main entrypoint
 KNOWN_ENTRIES = {
@@ -140,6 +144,12 @@ def analyze_ledger(path: Path, label: str) -> dict | None:
 def main():
     results = []
     fixtures_base = FIXTURES_DIR.resolve()
+
+    if BUILTIN_LEDGER.exists():
+        print("ANALYZING builtin beancount-example...")
+        r = analyze_ledger(BUILTIN_LEDGER, "beancount-example (builtin)")
+        if r:
+            results.append(r)
 
     for name, rel_entry in KNOWN_ENTRIES.items():
         if rel_entry is None:
