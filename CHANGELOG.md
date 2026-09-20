@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Timeouts are now bounded: the remaining budget is recomputed before every retry,
   read timeouts are no longer retried (previously a 45s budget could run 149s), and
   timeouts surface as `ProviderTimeoutError` → HTTP 504 instead of `429 LimitExceeded`.
+- Streaming retries no longer duplicate rendered output: a transient failure after
+  reasoning deltas have been streamed fails fast instead of retrying (which would
+  duplicate the "Thinking…" text).
+- `POST /providers_test` returns 404 for unknown provider names and caches the result
+  under the configured alias (previously it silently tested the default provider and
+  could key the cache by the provider type instead of the alias).
+- `scripts/eval_local.py` no longer hardcodes an API-key default.
 
 ### Changed
 - Default `agent.timeout_seconds` raised from 120 to 300 for slow local models.

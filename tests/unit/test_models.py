@@ -160,6 +160,37 @@ def test_provider_registry_unknown_name_without_type_is_logged(tmp_dir, caplog):
     assert any("mystery" in r.message for r in caplog.records)
 
 
+def test_provider_registry_alias_of(tmp_dir):
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.base import BaseProvider, ChatResponse
+    from fava_ai.models.registry import ProviderRegistry
+
+    class FakeProvider(BaseProvider):
+        @property
+        def provider_name(self):
+            return "fake-type"
+
+        def chat(self, messages, tools=None, model=None, **kwargs):
+            return ChatResponse(content="ok")
+
+        def chat_stream(self, messages, tools=None, model=None, **kwargs):
+            yield from []
+
+        def list_models(self):
+            return []
+
+        def test_connection(self):
+            return True
+
+    cm = ConfigManager(None, {}, tmp_dir)
+    reg = ProviderRegistry(cm)
+    provider = FakeProvider()
+    reg.register("alias-a", provider)
+
+    assert reg.alias_of(provider) == "alias-a"
+    assert reg.alias_of(FakeProvider()) is None
+
+
 def test_provider_registry_connection_cache_invalidate():
     from fava_ai.config import ConfigManager
     from fava_ai.models.registry import ProviderRegistry

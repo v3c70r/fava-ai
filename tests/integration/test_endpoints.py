@@ -306,6 +306,59 @@ def test_knowledge_status(client, ext):
     assert body["enabled"] is True
 
 
+# ── providers_test ────────────────────────────────────────────────
+
+
+def _fake_provider():
+    from fava_ai.models.base import BaseProvider, ChatResponse
+
+    class Fake(BaseProvider):
+        @property
+        def provider_name(self):
+            return "fake-type"
+
+        def chat(self, messages, tools=None, model=None, **kwargs):
+            return ChatResponse(content="ok")
+
+        def chat_stream(self, messages, tools=None, model=None, **kwargs):
+            yield from []
+
+        def list_models(self):
+            return ["model-one"]
+
+        def test_connection(self):
+            return True
+
+    return Fake()
+
+
+def test_providers_test_unknown_returns_404(client, ext):
+    resp = client.post("/providers_test", json={"provider": "does-not-exist"})
+    assert resp.status_code == 404
+    assert not resp.get_json()["connected"]
+
+
+def test_providers_test_caches_under_alias(client, ext):
+    ext.provider_registry.register("my-alias", _fake_provider())
+
+    resp = client.post("/providers_test", json={"provider": "my-alias"})
+    assert resp.status_code == 200
+    assert resp.get_json()["connected"] is True
+    # Keyed by alias so list_providers() reuses it.
+    assert ext.provider_registry._connection_cache.get("my-alias") is True
+
+
+def test_providers_test_default_uses_alias_not_type(client, ext):
+    ext.provider_registry.register("my-alias", _fake_provider())
+    ext.provider_registry._connection_cache.clear()
+
+    resp = client.post("/providers_test", json={})
+    assert resp.status_code == 200
+    # Cache must be keyed by the alias, not by the provider type name.
+    assert ext.provider_registry._connection_cache.get("my-alias") is True
+    assert "fake-type" not in ext.provider_registry._connection_cache
+
+
 # ── after_load_file ───────────────────────────────────────────────
 
 
