@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from decimal import Decimal
 
 from fava_ai.tools.base import BaseTool, ToolResult
 
@@ -15,6 +16,46 @@ from beancount.core.inventory import Inventory
 def _prepare_entries(ledger):
     """Get all entries from ledger."""
     return ledger.all_entries
+
+
+#: Tools must not dump unbounded output into the model context.
+MAX_TOOL_ROWS = 200
+MAX_TOOL_CHARS = 8000
+
+
+def _fit_rows(rows, build, max_rows=MAX_TOOL_ROWS, max_chars=MAX_TOOL_CHARS):
+    """Bound a list of row dicts so the serialized payload fits the budget.
+
+    ``build`` serializes a candidate row list for the size check. Returns the
+    (possibly truncated) rows and whether truncation happened.
+    """
+    truncated = len(rows) > max_rows
+    rows = rows[:max_rows]
+    while rows and len(build(rows)) > max_chars:
+        rows = rows[: max(1, len(rows) // 2)]
+        truncated = True
+    return rows, truncated
+
+
+def _json_safe(val):
+    """Convert a BQL result value into something JSON-serialisable."""
+    if val is None:
+        return ""
+    if isinstance(val, date):
+        return val.isoformat()
+    if isinstance(val, Inventory):
+        return val.to_string()
+    if isinstance(val, Amount):
+        return str(val)
+    if isinstance(val, Decimal):
+        return str(val)
+    if hasattr(val, "to_pydecimal"):
+        return str(val.to_pydecimal())
+    if isinstance(val, (str, bool, int, float)):
+        return val
+    if hasattr(val, "real"):
+        return val.real
+    return str(val)
 
 
 class RunBQLTool(BaseTool):
@@ -55,28 +96,34 @@ class RunBQLTool(BaseTool):
                 query,
             )
             columns = [col[0] for col in rtypes]
-            rows = []
+            all_rows = []
             for row in rrows:
-                row_data = {}
-                for i, col in enumerate(columns):
-                    val = row[i]
-                    if isinstance(val, date):
-                        val = val.isoformat()
-                    elif isinstance(val, Inventory):
-                        val = val.to_string()
-                    elif isinstance(val, Amount):
-                        val = str(val)
-                    elif hasattr(val, 'to_pydecimal'):
-                        val = str(val.to_pydecimal())
-                    elif val is not None and hasattr(val, 'real'):
-                        val = val.real
-                    row_data[col] = val if val is not None else ""
-                rows.append(row_data)
+                row_data = {
+                    col: _json_safe(row[i]) for i, col in enumerate(columns)
+                }
+                all_rows.append(row_data)
 
-            result_text = json.dumps({"columns": columns, "rows": rows, "row_count": len(rows)}, indent=2, ensure_ascii=False)
+            total = len(all_rows)
+            rows, truncated = _fit_rows(
+                all_rows,
+                lambda r: json.dumps(
+                    {"columns": columns, "rows": r}, ensure_ascii=False
+                ),
+            )
+            payload = {
+                "columns": columns,
+                "rows": rows,
+                "row_count": len(rows),
+                "total_rows": total,
+                "truncated": truncated,
+            }
+            result_text = json.dumps(payload, indent=2, ensure_ascii=False)
             return ToolResult(
                 content=result_text,
-                metadata={"columns": columns, "row_count": len(rows), "bql": query},
+                metadata={
+                    "columns": columns, "row_count": len(rows),
+                    "total_rows": total, "truncated": truncated, "bql": query,
+                },
             )
         except Exception as e:
             return ToolResult(
@@ -181,11 +228,16 @@ class AccountDetailsTool(BaseTool):
         acct_node = realization.get_or_create(root, account)
         balance = acct_node.balance.to_string() if not acct_node.balance.is_empty() else "0"
 
+        rows, truncated = _fit_rows(
+            postings_list,
+            lambda r: json.dumps({"recent_postings": r}, ensure_ascii=False),
+        )
         result = {
             "account": account,
             "balance": balance,
             "total_postings": count,
-            "recent_postings": postings_list,
+            "recent_postings": rows,
+            "truncated": truncated or len(rows) < len(postings_list),
         }
         return ToolResult(
             content=json.dumps(result, indent=2, ensure_ascii=False),
@@ -224,7 +276,8 @@ class SearchTransactionsTool(BaseTool):
 
     def execute(self, q: str, limit: int = 25) -> ToolResult:
         query_lower = q.lower()
-        results = []
+        results: list[dict] = []
+        total_matches = 0
         for entry in self._ledger.all_entries:
             if not hasattr(entry, 'date'):
                 continue
@@ -234,6 +287,9 @@ class SearchTransactionsTool(BaseTool):
             narration = str(entry.narration).lower() if hasattr(entry, 'narration') and entry.narration else ""
 
             if query_lower in payee or query_lower in narration:
+                total_matches += 1
+                if len(results) >= limit:
+                    continue
                 postings = []
                 if hasattr(entry, 'postings'):
                     for p in entry.postings:
@@ -249,11 +305,21 @@ class SearchTransactionsTool(BaseTool):
                     "postings": postings,
                 })
 
-            if len(results) >= limit:
-                break
-
-        result_text = json.dumps({"results": results, "count": len(results)}, indent=2, ensure_ascii=False)
-        return ToolResult(content=result_text, metadata={"query": q, "count": len(results)})
+        rows, truncated = _fit_rows(
+            results,
+            lambda r: json.dumps({"results": r}, ensure_ascii=False),
+        )
+        payload = {
+            "results": rows,
+            "count": len(rows),
+            "total_results": total_matches,
+            "truncated": truncated or len(rows) < len(results),
+        }
+        result_text = json.dumps(payload, indent=2, ensure_ascii=False)
+        return ToolResult(
+            content=result_text,
+            metadata={"query": q, "count": len(rows), "total_results": total_matches},
+        )
 
 
 class LedgerInfoTool(BaseTool):

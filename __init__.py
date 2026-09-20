@@ -75,9 +75,11 @@ class FavaAI(FavaExtensionBase):
         register_dashboard_tools(self._tool_registry, self.ledger)
 
         from fava_ai.tools.loader import load_external_tools
-        external_tools_dir = self.config_dir / "tools"
-        for ext_tool in load_external_tools(external_tools_dir):
-            self._tool_registry.register(ext_tool)
+        tools_config = self._config_manager.get_tools_config()
+        if tools_config.get("external_enabled", False):
+            external_tools_dir = self.config_dir / "tools"
+            for ext_tool in load_external_tools(external_tools_dir):
+                self._tool_registry.register(ext_tool)
 
         from fava_ai.prompts.registry import PromptRegistry
         self._prompt_registry = PromptRegistry(self.config_dir)
@@ -349,6 +351,11 @@ class FavaAI(FavaExtensionBase):
         data = request.get_json()
         if not isinstance(data, dict) or not data:
             return jsonify({"error": "Expected a JSON object"}), 400
+
+        from fava_ai.config import validate_config
+        errors = validate_config(data)
+        if errors:
+            return jsonify({"error": "Invalid config", "details": errors}), 400
 
         # Preserve masked secrets: a value of "***" means "leave unchanged".
         # Read from the raw on-disk config so `${ENV_VAR}` references survive.
