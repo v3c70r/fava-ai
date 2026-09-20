@@ -1,9 +1,10 @@
 """Layer 2: Ledger fixture integration tests."""
-import pytest
 from pathlib import Path
+
+import pytest
 from beancount import loader
 
-from tests.conftest import load_fixture, FIXTURES_DIR, MockLedger
+from tests.conftest import MockLedger, load_fixture
 
 
 @pytest.mark.fixture
@@ -14,15 +15,19 @@ def test_parse_beancount_example():
 
 
 @pytest.mark.fixture
-def test_parse_finzytrack():
-    from pathlib import Path
-    p = FIXTURES_DIR / "finzytrack"
-    files = list(p.rglob("*.beancount"))
+def test_parse_optional_sample_ledger():
+    """Parse an external sample ledger if scripts/fetch_sample_ledgers.sh was run.
+
+    These repos are intentionally not vendored (see scripts/fetch_sample_ledgers.sh).
+    """
+    from tests.conftest import REPO_ROOT
+    sample_dir = REPO_ROOT / ".sample-ledgers"
+    files = sorted(sample_dir.rglob("*.beancount")) if sample_dir.exists() else []
     if not files:
-        pytest.skip("finzytrack files not found")
+        pytest.skip("external sample ledgers not fetched; run scripts/fetch_sample_ledgers.sh")
     entries, errors, _ = loader.load_file(str(files[0]))
-    # Might have include errors if includes aren't resolved; just verify it parses
-    assert len(entries) > 0
+    # Includes may not resolve standalone; just verify the loader does not crash.
+    assert isinstance(entries, list)
 
 
 @pytest.mark.fixture
@@ -30,10 +35,10 @@ def test_account_extraction():
     entries, errors, options = load_fixture("beancount-example")
     assert len(errors) == 0
 
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.knowledge.extractors.accounts import AccountExtractor
-
     import tempfile
+
+    from fava_ai.knowledge.extractors.accounts import AccountExtractor
+    from fava_ai.knowledge.wiki import WikiManager
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
         extractor = AccountExtractor(wiki)
@@ -46,10 +51,10 @@ def test_merchant_extraction():
     entries, errors, options = load_fixture("beancount-example")
     assert len(errors) == 0
 
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.knowledge.extractors.merchants import MerchantExtractor
-
     import tempfile
+
+    from fava_ai.knowledge.extractors.merchants import MerchantExtractor
+    from fava_ai.knowledge.wiki import WikiManager
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
         extractor = MerchantExtractor(wiki)
@@ -62,10 +67,10 @@ def test_recurring_detection():
     entries, errors, options = load_fixture("beancount-example")
     assert len(errors) == 0
 
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.knowledge.extractors.recurring import RecurringExtractor
-
     import tempfile
+
+    from fava_ai.knowledge.extractors.recurring import RecurringExtractor
+    from fava_ai.knowledge.wiki import WikiManager
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
         extractor = RecurringExtractor(wiki)
@@ -78,10 +83,10 @@ def test_full_extraction_pipeline():
     entries, errors, options = load_fixture("beancount-example")
     assert len(errors) == 0
 
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.knowledge.engine import KnowledgeEngine
-
     import tempfile
+
+    from fava_ai.knowledge.engine import KnowledgeEngine
+    from fava_ai.knowledge.wiki import WikiManager
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
         engine = KnowledgeEngine(wiki)
@@ -101,10 +106,10 @@ def test_extraction_idempotent():
     entries, errors, options = load_fixture("beancount-example")
     assert len(errors) == 0
 
-    from fava_ai.knowledge.wiki import WikiManager
-    from fava_ai.knowledge.engine import KnowledgeEngine
-
     import tempfile
+
+    from fava_ai.knowledge.engine import KnowledgeEngine
+    from fava_ai.knowledge.wiki import WikiManager
     with tempfile.TemporaryDirectory() as d:
         wiki = WikiManager(Path(d))
         engine = KnowledgeEngine(wiki)

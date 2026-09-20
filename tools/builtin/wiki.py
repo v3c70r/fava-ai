@@ -2,8 +2,8 @@
 
 import json
 
-from fava_ai.tools.base import BaseTool, ToolResult
 from fava_ai.knowledge.wiki import WikiManager
+from fava_ai.tools.base import BaseTool, ToolResult
 
 
 class WikiSearchTool(BaseTool):

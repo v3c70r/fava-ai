@@ -1,9 +1,9 @@
 """Unit tests for config.py."""
 import os
-import yaml
-import pytest
 from pathlib import Path
 
+import pytest
+import yaml
 from fava_ai.config import ConfigManager
 
 

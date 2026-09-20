@@ -4,8 +4,7 @@ from pathlib import Path
 
 import yaml
 
-
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, dict] = {
     "agent": {
         "max_iterations": 10,
         "max_tool_calls": 20,
@@ -23,7 +22,7 @@ class ConfigManager:
         self._ledger = ledger
         self._extension_config = extension_config
         self._config_dir = Path(config_dir)
-        self._yaml_config = {}
+        self._yaml_config: dict = {}
         self._load_yaml()
 
     def _load_yaml(self):

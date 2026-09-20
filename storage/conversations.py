@@ -99,7 +99,7 @@ def load_messages(db, conv_id: str) -> list[Message]:
         if r.get("tool_calls"):
             try:
                 raw = json.loads(r["tool_calls"])
-                from fava_ai.models.base import ToolCall, FunctionCall
+                from fava_ai.models.base import FunctionCall, ToolCall
                 tool_calls = [
                     ToolCall(
                         id=tc["id"],

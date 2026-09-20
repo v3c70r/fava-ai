@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Deep analysis of selected fixtures for quality assessment."""
+"""Deep analysis of selected fixtures for quality assessment.
 
-import os, sys
-from pathlib import Path
+Analyzes built-in ledgers under tests/data/ledgers/.
+"""
+
+import os
+import sys
 from collections import Counter, defaultdict
+from pathlib import Path
+
 from beancount import loader
 from beancount.core import data, getters
-from beancount.core.data import Transaction, Open, Custom, Commodity
+from beancount.core.data import Commodity, Custom, Open, Transaction
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "ledgers"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FIXTURES_DIR = REPO_ROOT / "tests" / "data" / "ledgers"
 
 TARGETS = {
     "beancount-example": FIXTURES_DIR / "beancount-example.beancount",
@@ -88,7 +94,7 @@ def analyze_deep(label, path):
     # Also check account names
     account_text = " ".join(a.lower() for a in accounts)
 
-    print(f"\n  LANGUAGE INDICATORS:")
+    print("\n  LANGUAGE INDICATORS:")
     for lang, words in lang_indicators.items():
         matches = sum(1 for w in words if w in all_text or w in account_text)
         if matches > 0:
@@ -119,14 +125,14 @@ def analyze_deep(label, path):
                     all_meta_keys[k] += 1
 
     if all_meta_keys:
-        print(f"\n  METADATA SCHEMA (non-standard keys across all entries):")
+        print("\n  METADATA SCHEMA (non-standard keys across all entries):")
         for k, v in all_meta_keys.most_common(20):
             print(f"    {k}: {v} occurrences")
 
     # Payee analysis
     payees = Counter(t.payee for t in txns if t.payee)
     if payees:
-        print(f"\n  PAYEE ANALYSIS:")
+        print("\n  PAYEE ANALYSIS:")
         print(f"    Unique payees: {len(payees)}")
         # Distribution
         freq_dist = Counter()
@@ -187,7 +193,7 @@ def analyze_deep(label, path):
 
     # File includes - check the main file for include directives
     main_content = path.read_text(errors='replace')
-    include_lines = [l.strip() for l in main_content.split('\n') if l.strip().startswith('include ')]
+    include_lines = [line.strip() for line in main_content.split('\n') if line.strip().startswith('include ')]
     if include_lines:
         print(f"\n  INCLUDES in main file: {len(include_lines)}")
         for line in include_lines[:10]:

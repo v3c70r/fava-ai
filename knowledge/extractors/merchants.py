@@ -15,7 +15,7 @@ class MerchantExtractor:
         merchants_dir = self.wiki.wiki_dir / "merchants"
         merchants_dir.mkdir(parents=True, exist_ok=True)
 
-        merchant_data = defaultdict(lambda: {
+        merchant_data: dict[str, dict] = defaultdict(lambda: {
             "transactions": [],
             "total_spent": defaultdict(Decimal),
             "first_seen": None,

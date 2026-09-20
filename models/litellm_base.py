@@ -8,7 +8,6 @@ from abc import abstractmethod
 from typing import Iterator
 
 import litellm
-
 from fava_ai.models.base import (
     BaseProvider,
     ChatResponse,

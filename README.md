@@ -296,31 +296,57 @@ The wiki (`wiki/`) should be committed — it's versioned knowledge that compoun
 - Python >= 3.10
 - [Fava](https://github.com/beancount/fava) >= 1.27
 - [Beancount](https://github.com/beancount/beancount) >= 2.3
-- `litellm` >= 1.85, `pyyaml` >= 6.0, `jinja2` >= 3.0
+- `litellm` >= 1.85, `pyyaml` >= 6.0, `jinja2` >= 3.0, `requests` >= 2.28
 
 ## Development
 
 ```bash
 git clone https://github.com/v3c70r/fava-ai.git
 cd fava-ai
-python3 -m venv .venv && source .venv/bin/activate
+uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 
-# Run tests
-pytest tests/ -q
+# Lint, type-check, test
+ruff check .
+mypy .
+pytest -q
+pytest -q --cov=fava_ai --cov-report=term-missing
 
 # Run with a test fixture
 mkdir -p .fava-ai
-echo '
+cat > .fava-ai/config.yaml <<'YAML'
 providers:
   ollama:
     base_url: http://localhost:11434
     model: llama3
-' > .fava-ai/config.yaml
+YAML
 
 # Add extension directive and run
-echo "2010-01-01 custom \"fava-extension\" \"fava_ai\" \"{'provider': 'ollama'}\"" | cat - tests/fixtures/ledgers/beancount-example.beancount > /tmp/test.beancount
+cat tests/data/ledgers/beancount-example.beancount > /tmp/test.beancount
+echo "2010-01-01 custom \"fava-extension\" \"fava_ai\" \"{'provider': 'ollama'}\"" >> /tmp/test.beancount
 fava /tmp/test.beancount
+```
+
+### Optional: external sample ledgers
+
+For performance and extractor testing against larger, real-world ledgers, fetch the
+sample repositories (kept out of the repo for licensing reasons):
+
+```bash
+scripts/fetch_sample_ledgers.sh
+FAVA_AI_SAMPLE_LEDGERS=$PWD/.sample-ledgers python3 scripts/analyze_ledgers.py
+```
+
+### Repository layout
+
+```
+tests/
+  unit/        # pure logic tests
+  llm/         # agent loop with mock providers
+  data/        # checked-in .beancount fixtures
+  test_ledger_fixtures.py
+scripts/       # manual analysis / provider smoke tests (not part of CI)
+docs/          # design & history documents
 ```
 
 ## License

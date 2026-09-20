@@ -1,17 +1,16 @@
 """Shared test fixtures."""
 import tempfile
-from pathlib import Path
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
-
 from beancount import loader
-from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount
+from beancount.core.data import Posting, Transaction
 from beancount.core.inventory import Inventory
 
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "ledgers"
+FIXTURES_DIR = Path(__file__).parent / "data" / "ledgers"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture

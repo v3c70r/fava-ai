@@ -2,13 +2,13 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from fava_ai.storage.schema import SCHEMA_VERSION, MIGRATIONS
+from fava_ai.storage.schema import MIGRATIONS
 
 
 class Database:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
-        self._conn = None
+        self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()
 
     @property

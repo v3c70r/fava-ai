@@ -2,13 +2,14 @@ import json
 from datetime import date
 
 from fava_ai.tools.base import BaseTool, ToolResult
+
 try:
     from beanquery import query as bql_query
 except ImportError:
     from beancount.query import query as bql_query
 from beancount.core import realization
-from beancount.core.inventory import Inventory
 from beancount.core.amount import Amount
+from beancount.core.inventory import Inventory
 
 
 def _prepare_entries(ledger):
@@ -161,7 +162,7 @@ class AccountDetailsTool(BaseTool):
     def execute(self, account: str, limit: int = 20) -> ToolResult:
         entries = self._ledger.all_entries
 
-        postings_list = []
+        postings_list: list[dict] = []
         count = 0
         for entry in entries:
             if hasattr(entry, 'postings'):

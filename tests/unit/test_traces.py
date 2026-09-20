@@ -1,8 +1,7 @@
 """Unit tests for traces storage."""
 import pytest
-
 from fava_ai.storage.database import Database
-from fava_ai.storage.traces import save_trace, get_traces
+from fava_ai.storage.traces import get_traces, save_trace
 
 
 @pytest.fixture

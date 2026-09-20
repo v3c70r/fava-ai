@@ -2,10 +2,10 @@
 
 import re
 import shutil
-import yaml
 from datetime import datetime
 from pathlib import Path
 
+import yaml
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _META_FILES = {"index.md", "AGENTS.md", "log.md"}
@@ -22,7 +22,7 @@ class WikiPage:
         if not path.exists():
             return cls(path, {}, "")
         text = path.read_text(encoding="utf-8")
-        meta = {}
+        meta: dict = {}
         body = text
         m = FRONTMATTER_RE.match(text)
         if m:

@@ -14,8 +14,8 @@ class SpendingExtractor:
         patterns_dir = self.wiki.wiki_dir / "patterns"
         patterns_dir.mkdir(parents=True, exist_ok=True)
 
-        by_category = defaultdict(Decimal)
-        by_month = defaultdict(Decimal)
+        by_category: defaultdict[str, Decimal] = defaultdict(Decimal)
+        by_month: defaultdict[str, Decimal] = defaultdict(Decimal)
         oper_ccy = options.get("operating_currency", ["USD"])[0]
 
         for entry in entries:
@@ -90,7 +90,7 @@ class CashflowExtractor:
         patterns_dir = self.wiki.wiki_dir / "patterns"
         patterns_dir.mkdir(parents=True, exist_ok=True)
 
-        by_month = defaultdict(lambda: {"income": Decimal("0"), "expenses": Decimal("0")})
+        by_month: defaultdict[str, dict[str, Decimal]] = defaultdict(lambda: {"income": Decimal("0"), "expenses": Decimal("0")})
         oper_ccy = options.get("operating_currency", ["USD"])[0]
 
         for entry in entries:

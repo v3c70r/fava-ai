@@ -1,7 +1,7 @@
 """Unit tests for storage/ modules."""
-import pytest
 from pathlib import Path
 
+import pytest
 from fava_ai.storage.database import Database
 from fava_ai.storage.schema import SCHEMA_VERSION
 

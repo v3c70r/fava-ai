@@ -3,7 +3,6 @@
 from collections import defaultdict
 from decimal import Decimal
 
-from beancount.core import realization
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
 
 
@@ -16,7 +15,7 @@ class PortfolioExtractor:
         port_dir = self.wiki.wiki_dir / "portfolio"
         port_dir.mkdir(parents=True, exist_ok=True)
 
-        commodities = defaultdict(lambda: {
+        commodities: defaultdict[str, dict] = defaultdict(lambda: {
             "total_units": Decimal("0"),
             "accounts": set(),
             "transactions": 0,
@@ -39,7 +38,7 @@ class PortfolioExtractor:
             "# Portfolio",
             "",
             "## Holdings",
-            f"*Extracted from Assets accounts*",
+            "*Extracted from Assets accounts*",
             "",
             "| Commodity | Total Units | Accounts | Transactions |",
             "|-----------|------------|----------|-------------|",

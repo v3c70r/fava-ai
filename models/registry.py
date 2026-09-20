@@ -1,9 +1,10 @@
+from fava_ai.models.anthropic import AnthropicProvider
 from fava_ai.models.base import BaseProvider
+from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.models.ollama import OllamaProvider
 from fava_ai.models.openai import OpenAIProvider
-from fava_ai.models.anthropic import AnthropicProvider
-from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.models.openai_compat import OpenAICompatProvider
+
 
 class ProviderRegistry:
     def __init__(self, config_manager):

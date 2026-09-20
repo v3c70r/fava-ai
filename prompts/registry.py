@@ -1,7 +1,8 @@
 """PromptRegistry — discover, load, search prompts."""
 
-import yaml
 from pathlib import Path
+
+import yaml
 
 
 class PromptRegistry:
@@ -15,8 +16,8 @@ class PromptRegistry:
 
     def _load_builtin_prompts(self):
         from fava_ai.prompts.builtin.default import DEFAULT_PROMPT
-        from fava_ai.prompts.builtin.monthly_review import MONTHLY_REVIEW_PROMPT
         from fava_ai.prompts.builtin.investment_review import INVESTMENT_REVIEW_PROMPT
+        from fava_ai.prompts.builtin.monthly_review import MONTHLY_REVIEW_PROMPT
 
         self._prompts["default"] = {
             "id": "default",
@@ -82,15 +83,15 @@ class PromptRegistry:
 
     def search(self, query: str) -> list[dict]:
         q = query.lower()
-        results = []
+        results: list[dict] = []
         for p in self._prompts.values():
             content = p.get("content", "")
             if (q in p.get("name", "").lower() or
                 q in p.get("description", "").lower() or
                 q in content.lower()[:500]):
-                results.append(p.get("id"))
-        return [self._prompts[r] for r in results]
+                results.append(p)
+        return results
 
     def get_system_prompt(self, prompt_id: str = "default") -> str:
-        prompt = self._prompts.get(prompt_id, self._prompts.get("default", {}))
+        prompt = self._prompts.get(prompt_id) or self._prompts.get("default") or {}
         return prompt.get("content", "")

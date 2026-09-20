@@ -1,12 +1,11 @@
 """Unit tests for models/ modules."""
 import pytest
-
 from fava_ai.models.base import (
-    Message,
     ChatResponse,
-    ToolCall,
     FunctionCall,
+    Message,
     StreamChunk,
+    ToolCall,
 )
 
 

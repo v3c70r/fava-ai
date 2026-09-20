@@ -1,7 +1,7 @@
 """Unit tests for knowledge/ modules."""
-import pytest
 from pathlib import Path
 
+import pytest
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
 
 
