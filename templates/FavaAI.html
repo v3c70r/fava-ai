@@ -55,22 +55,27 @@
 </div>
 
 <style>
+/* Uses Fava's own theme custom properties so the panel follows the app
+   (including dark mode) instead of hardcoding a light palette.
+   Fallbacks keep it readable if a variable is missing. */
 .fava-ai-container {
   display: flex;
   height: calc(100vh - 60px);
-  gap: 0;
+  color: var(--text-color, #404040);
+  font-family: var(--font-family, "Fira Sans", sans-serif);
 }
 .fava-ai-sidebar {
   width: 260px;
-  border-right: 1px solid #ddd;
+  border-right: 1px solid var(--sidebar-border, var(--border, #d9d9d9));
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: var(--sidebar-background, var(--background-darker, #f2f2f2));
+  color: var(--sidebar-color, var(--text-color-lighter, #4d4d4d));
   flex-shrink: 0;
 }
 .fava-ai-sidebar-header {
   padding: 12px;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid var(--sidebar-border, var(--border, #d9d9d9));
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -79,6 +84,7 @@
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+  color: var(--text-color, #404040);
 }
 .fava-ai-conv-list {
   flex: 1;
@@ -96,10 +102,10 @@
   align-items: center;
 }
 .fava-ai-conv-item:hover {
-  background: #e8e8e8;
+  background: var(--background-darkest, #e6e6e6);
 }
 .fava-ai-conv-item.active {
-  background: #d4e5ff;
+  background: color-mix(in srgb, var(--button-background, #0065a3) 18%, var(--background, #fff));
 }
 .fava-ai-conv-item .conv-title {
   flex: 1;
@@ -113,17 +119,17 @@
   line-height: 1;
   padding: 0 4px;
   cursor: pointer;
-  color: #999;
+  color: var(--text-color-lightest, #666);
 }
 .fava-ai-conv-item:hover .conv-delete {
   opacity: 1;
 }
 .fava-ai-conv-item .conv-delete:hover {
-  color: #e44;
+  color: var(--diff-red, #973535);
 }
 .fava-ai-conv-item.confirming .conv-delete {
   opacity: 1;
-  color: #e44;
+  color: var(--diff-red, #973535);
   font-weight: 600;
 }
 .fava-ai-conv-item .conv-rename {
@@ -131,12 +137,14 @@
   min-width: 0;
   font-size: 13px;
   padding: 2px 4px;
-  border: 1px solid #66a;
+  border: 1px solid var(--link-color, #0065a3);
   border-radius: 4px;
+  background: var(--background, #fff);
+  color: var(--text-color, #404040);
 }
 .fava-ai-sidebar-footer {
   padding: 10px 12px;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--sidebar-border, var(--border, #d9d9d9));
   font-size: 12px;
 }
 .fava-ai-main {
@@ -150,16 +158,17 @@
   gap: 8px;
   align-items: center;
   padding: 8px 24px;
-  border-bottom: 1px solid #eee;
-  background: #fff;
+  border-bottom: 1px solid var(--border, #d9d9d9);
+  background: var(--background, #fff);
 }
 .fava-ai-toolbar select {
   font-size: 12px;
   padding: 4px 6px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border, #d9d9d9);
   border-radius: 6px;
   max-width: 200px;
-  background: #fff;
+  background: var(--background, #fff);
+  color: var(--text-color, #404040);
 }
 .fava-ai-toolbar #export-btn {
   margin-left: auto;
@@ -168,14 +177,15 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
+  background: var(--background, #fff);
 }
 .fava-ai-welcome {
   text-align: center;
   margin-top: 60px;
-  color: #666;
+  color: var(--text-color-lightest, #666);
 }
 .fava-ai-welcome h2 {
-  color: #333;
+  color: var(--text-color, #404040);
   margin-bottom: 16px;
 }
 .fava-ai-welcome ul {
@@ -186,35 +196,41 @@
 .fava-ai-welcome li {
   margin-bottom: 4px;
   cursor: pointer;
-  color: #2266cc;
+  color: var(--link-color, #0065a3);
 }
 .fava-ai-welcome li:hover {
   text-decoration: underline;
 }
 .fava-ai-input-area {
   padding: 12px 24px;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--border, #d9d9d9);
   display: flex;
   gap: 8px;
   align-items: flex-end;
+  background: var(--background, #fff);
 }
 .fava-ai-input-area textarea {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border, #d9d9d9);
   border-radius: 8px;
   resize: none;
   font-family: inherit;
   font-size: 14px;
+  background: var(--background, #fff);
+  color: var(--text-color, #404040);
+}
+.fava-ai-input-area textarea::placeholder {
+  color: var(--text-color-lightest, #666);
 }
 .fava-ai-input-area textarea:focus {
   outline: none;
-  border-color: #66a;
+  border-color: var(--link-color, #0065a3);
 }
 .fava-ai-panel {
   width: 300px;
-  border-left: 1px solid #ddd;
-  background: #fafafa;
+  border-left: 1px solid var(--border, #d9d9d9);
+  background: var(--background-darker, #f2f2f2);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -222,7 +238,7 @@
 }
 .fava-ai-panel-tabs {
   display: flex;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid var(--border, #d9d9d9);
 }
 .panel-tab {
   flex: 1;
@@ -232,10 +248,12 @@
   cursor: pointer;
   font-size: 12px;
   text-align: center;
+  color: var(--text-color-lighter, #4d4d4d);
   border-bottom: 2px solid transparent;
 }
 .panel-tab.active {
-  border-bottom-color: #66a;
+  border-bottom-color: var(--link-color, #0065a3);
+  color: var(--text-color, #404040);
   font-weight: 600;
 }
 .panel-content {
@@ -253,13 +271,14 @@
   padding: 10px 14px;
   border-radius: 8px;
   max-width: 85%;
+  color: var(--text-color, #404040);
 }
 .message.user {
-  background: #e3f0ff;
+  background: color-mix(in srgb, var(--button-background, #0065a3) 14%, var(--background, #fff));
   margin-left: auto;
 }
 .message.assistant {
-  background: #f5f5f5;
+  background: var(--summary-background, var(--background-darker, #f2f2f2));
 }
 .message.assistant .content {
   line-height: 1.5;
@@ -272,6 +291,7 @@
 .message.assistant .content h4 {
   margin: 10px 0 4px;
   line-height: 1.3;
+  color: var(--text-color, #404040);
 }
 .message.assistant .content ul,
 .message.assistant .content ol {
@@ -281,10 +301,10 @@
 .message.assistant .content blockquote {
   margin: 6px 0;
   padding: 2px 10px;
-  border-left: 3px solid #ccd;
-  color: #556;
+  border-left: 3px solid var(--border, #d9d9d9);
+  color: var(--text-color-lighter, #4d4d4d);
 }
-.message.assistant .content a { color: #2266cc; }
+.message.assistant .content a { color: var(--link-color, #0065a3); }
 .message.assistant .content table {
   border-collapse: collapse;
   margin: 8px 0;
@@ -292,22 +312,23 @@
 }
 .message.assistant .content th,
 .message.assistant .content td {
-  border: 1px solid #ddd;
+  border: 1px solid var(--table-border, var(--border-lighter, #e6e6e6));
   padding: 4px 8px;
   text-align: left;
 }
 .message.assistant .content th {
-  background: #ececec;
+  background: var(--table-header-background, var(--background-darkest, #e6e6e6));
+  color: var(--table-header-text, var(--text-color-lightest, #666));
   font-weight: 600;
 }
 .message.assistant .content code {
-  background: #e8e8e8;
+  background: var(--code-background, #f2f2f2);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 13px;
 }
 .message.assistant .content pre {
-  background: #e8e8e8;
+  background: var(--code-background, #f2f2f2);
   padding: 8px 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -320,21 +341,22 @@
 .message.streaming .content::after {
   content: '\258b';
   animation: blink 1s step-start infinite;
-  color: #889;
+  color: var(--text-color-lightest, #666);
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* Live "running" indicator while a tool executes. */
 .tool-chip {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 6px 0;
   padding: 4px 10px;
-  background: #eef2f8;
-  border: 1px solid #dde4ee;
+  background: var(--background-darkest, #e6e6e6);
+  border: 1px solid var(--border-lighter, #e6e6e6);
   border-radius: 14px;
   font-size: 12px;
-  color: #556;
+  color: var(--text-color-lighter, #4d4d4d);
   width: fit-content;
 }
 .tool-chip .spinner {
@@ -342,99 +364,32 @@
   height: 10px;
   border-width: 2px;
 }
-.assistant-note {
-  margin-top: 6px;
-  font-size: 11px;
-  color: #999;
-}
-.assistant-note p { margin: 0; }
-.partial-note {
-  margin-top: 6px;
-  padding: 4px 8px;
-  background: #fff6e5;
-  border: 1px solid #f0d9a8;
-  border-radius: 6px;
-  color: #8a6100;
-  font-size: 12px;
-}
-.config-form label {
-  display: block;
-  margin: 8px 0 2px;
-  font-size: 11px;
-  color: #666;
-}
-.config-form input,
-.config-form select {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 4px 6px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.config-form button {
-  margin-top: 12px;
-}
-.config-status { margin-top: 6px; font-size: 12px; }
-.config-status.ok { color: #2a7; }
-.config-status.err { color: #c33; }
-.config-hint {
-  margin-top: 10px;
-  font-size: 11px;
-  color: #888;
-}
-.reasoning {
-  margin: 0 0 8px;
-  padding: 6px 10px;
-  background: #f7f7fa;
-  border: 1px dashed #d8d8e0;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #667;
-}
-.reasoning summary {
-  cursor: pointer;
-  color: #889;
-  font-style: italic;
-}
-.reasoning .reasoning-text {
-  margin-top: 4px;
-  white-space: pre-wrap;
-  max-height: 240px;
-  overflow-y: auto;
-}
-.assistant-error {
-  margin-top: 6px;
-  padding: 6px 10px;
-  background: #fdecec;
-  border: 1px solid #f5c6c6;
-  border-radius: 6px;
-  color: #a33;
-  font-size: 13px;
-}
 
-.tool-call-card {
-  margin: 8px 0;
-  border: 1px solid #ddd;
+/* All tool calls live in one collapsed block (issue #15). */
+.tool-activity {
+  margin-top: 8px;
+  border: 1px solid var(--border, #d9d9d9);
   border-radius: 6px;
-  background: #fff;
+  background: var(--background, #fff);
+  font-size: 12px;
 }
-.tool-call-card summary {
-  padding: 6px 10px;
+.tool-activity > summary {
+  padding: 5px 10px;
   cursor: pointer;
-  font-size: 12px;
+  color: var(--text-color-lightest, #666);
+  user-select: none;
+}
+.tool-activity-body {
+  padding: 4px 10px 8px;
+  border-top: 1px solid var(--border-lighter, #e6e6e6);
+}
+.tool-call { margin: 6px 0; }
+.tool-call-name {
   font-weight: 600;
-  color: #555;
-  background: #f9f9f9;
-  border-radius: 6px;
+  color: var(--text-color-lighter, #4d4d4d);
 }
-.tool-call-card .tool-detail {
-  padding: 8px 10px;
-  font-size: 12px;
-  border-top: 1px solid #eee;
-}
-.tool-call-card pre {
-  background: #f5f5f5;
+.tool-call pre {
+  background: var(--code-background, #f2f2f2);
   padding: 6px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -443,18 +398,77 @@
   overflow-y: auto;
   margin: 4px 0 0;
 }
+.tool-call-error { color: var(--red, #900); }
 
-.provenance-footer {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #999;
+.reasoning {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  background: var(--background, #fff);
+  border: 1px dashed var(--border, #d9d9d9);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-color-lighter, #4d4d4d);
 }
-.provenance-footer details {
-  display: inline;
-}
-.provenance-footer summary {
+.reasoning summary {
   cursor: pointer;
-  color: #888;
+  color: var(--text-color-lightest, #666);
+  font-style: italic;
+}
+.reasoning .reasoning-text {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.assistant-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-color-lightest, #666);
+}
+.assistant-note p { margin: 0; }
+.partial-note {
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--yellow, #edd431) 18%, var(--background, #fff));
+  border: 1px solid var(--yellow, #edd431);
+  border-radius: 6px;
+  color: var(--text-color, #404040);
+  font-size: 12px;
+}
+.assistant-error {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--red, #900) 12%, var(--background, #fff));
+  border: 1px solid var(--red, #900);
+  border-radius: 6px;
+  color: var(--red, #900);
+  font-size: 13px;
+}
+.config-form label {
+  display: block;
+  margin: 8px 0 2px;
+  font-size: 11px;
+  color: var(--text-color-lightest, #666);
+}
+.config-form input,
+.config-form select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 4px;
+  background: var(--background, #fff);
+  color: var(--text-color, #404040);
+}
+.config-form button { margin-top: 12px; }
+.config-status { margin-top: 6px; font-size: 12px; }
+.config-status.ok { color: var(--diff-green, #35973d); }
+.config-status.err { color: var(--diff-red, #973535); }
+.config-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-color-lightest, #666);
 }
 
 .loading {
@@ -462,14 +476,14 @@
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  color: #888;
+  color: var(--text-color-lightest, #666);
   font-size: 13px;
 }
 .loading .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #ddd;
-  border-top-color: #66a;
+  border: 2px solid var(--border, #d9d9d9);
+  border-top-color: var(--link-color, #0065a3);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -482,7 +496,7 @@
   border-radius: 50%;
   margin-right: 4px;
 }
-.status-dot.connected { background: #4a4; }
-.status-dot.disconnected { background: #e44; }
+.status-dot.connected { background: var(--diff-green, #35973d); }
+.status-dot.disconnected { background: var(--diff-red, #973535); }
 </style>
 {% endblock %}

@@ -417,6 +417,9 @@ export default {
             if (event.message_id) this.currentAssistantEl.dataset.messageId = event.message_id;
             this.activeConvId = event.conversation_id;
             this.appendNote(this.currentAssistantEl, event.provenance_summary || '');
+            // Everything is final now: fold the tool trail away.
+            const activity = this.currentAssistantEl.querySelector('.tool-activity');
+            if (activity) activity.removeAttribute('open');
             if (event.partial) {
                 this.appendPartial(this.currentAssistantEl, event.stop_reason);
             }
@@ -468,6 +471,9 @@ export default {
     },
 
     addToolChip(el, name) {
+        // Only one live indicator at a time.
+        const existing = el.querySelector('.tool-chip.running');
+        if (existing) existing.remove();
         const chip = document.createElement('div');
         chip.className = 'tool-chip running';
         chip.innerHTML = `<span class="spinner"></span> Running ${this.esc(name)}\u2026`;
@@ -478,14 +484,9 @@ export default {
     addToolStep(el, step) {
         const chip = el.querySelector('.tool-chip.running');
         if (chip) chip.remove();
-        let footer = el.querySelector('.provenance-footer');
-        if (!footer) {
-            footer = document.createElement('div');
-            footer.className = 'provenance-footer';
-            el.appendChild(footer);
-        }
-        footer.insertAdjacentHTML('beforeend', this.renderToolCards([step]));
-        this.scrollToBottom();
+        if (!el._toolSteps) el._toolSteps = [];
+        el._toolSteps.push(step);
+        this.upsertToolActivity(el, el._toolSteps);
     },
 
     appendNote(el, text) {
@@ -515,7 +516,8 @@ export default {
 
     // ── message rendering ─────────────────────────────────────────
 
-    renderToolCards(toolSteps) {
+    renderToolSteps(toolSteps) {
+        // Inner content of the collapsed "Tool activity" block.
         if (!toolSteps || toolSteps.length === 0) return '';
         let html = '';
         for (const step of toolSteps) {
@@ -526,40 +528,40 @@ export default {
                 inputDisplay = step.tool_input || '';
             }
             html += `
-                <div class="tool-call-card">
-                    <details>
-                        <summary>Tool: ${this.esc(step.tool_name)}</summary>
-                        <div class="tool-detail">
-                            <strong>Input:</strong>
-                            <pre>${this.esc(inputDisplay)}</pre>
-                            ${step.error ? `<strong>Error:</strong> <pre>${this.esc(step.error)}</pre>` : ''}
-                        </div>
-                    </details>
+                <div class="tool-call">
+                    <div class="tool-call-name">${this.esc(step.tool_name)}</div>
+                    <pre>${this.esc(inputDisplay)}</pre>
+                    ${step.error ? `<pre class="tool-call-error">${this.esc(step.error)}</pre>` : ''}
                 </div>`;
         }
         return html;
     },
 
-    renderProvenance(toolSteps) {
-        const cards = this.renderToolCards(toolSteps);
-        if (!cards) return '';
-        return `<div class="provenance-footer">${cards}</div>`;
+    upsertToolActivity(el, toolSteps) {
+        // One collapsed block for the whole audit trail, hidden by default so
+        // the answer stays readable (issue #15).
+        if (!toolSteps || toolSteps.length === 0) return;
+        let block = el.querySelector('.tool-activity');
+        if (!block) {
+            block = document.createElement('details');
+            block.className = 'tool-activity';
+            const note = el.querySelector('.assistant-note, .partial-note');
+            if (note) el.insertBefore(block, note);
+            else el.appendChild(block);
+        }
+        const wasOpen = block.hasAttribute('open');
+        block.innerHTML =
+            `<summary>Tool activity (${toolSteps.length})</summary>` +
+            `<div class="tool-activity-body">${this.renderToolSteps(toolSteps)}</div>`;
+        if (wasOpen) block.setAttribute('open', '');
+        this.scrollToBottom();
     },
 
-    addMessage(role, content, provenance, messageId) {
+    addMessage(role, content, messageId) {
         const div = document.createElement('div');
         div.className = `message ${role}`;
         if (messageId) div.dataset.messageId = messageId;
-
-        let html = `<div class="content">${this.md(content)}</div>`;
-
-        if (provenance && provenance.steps) {
-            html += this.renderProvenance(
-                provenance.steps.filter(s => s.step_type === 'tool_call')
-            );
-        }
-
-        div.innerHTML = html;
+        div.innerHTML = `<div class="content">${this.md(content)}</div>`;
         this.el.messages.appendChild(div);
         this.scrollToBottom();
         return div;
@@ -569,8 +571,7 @@ export default {
         try {
             const steps = await this.api('GET', 'traces', null, { message_id: messageId });
             const toolSteps = (steps || []).filter(s => s.step_type === 'tool_call');
-            if (toolSteps.length === 0) return;
-            messageEl.insertAdjacentHTML('beforeend', this.renderProvenance(toolSteps));
+            this.upsertToolActivity(messageEl, toolSteps);
         } catch (e) {
             console.error('Failed to load traces:', e);
         }
@@ -582,7 +583,7 @@ export default {
             if (msg.role === 'system' || msg.role === 'tool') continue;
             if (msg.role === 'assistant' && this.hasToolCalls(msg)) continue;
 
-            const el = this.addMessage(msg.role, msg.content, null, msg.id);
+            const el = this.addMessage(msg.role, msg.content, msg.id);
             if (msg.role === 'assistant' && msg.id) {
                 this.loadTraces(msg.id, el);
             }

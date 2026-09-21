@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/eval_local.py` to evaluate the agent stack against a live endpoint.
 
 ### Fixed
+- **Tool calls no longer pile up below the answer.** Each `tool_call` used to
+  append a visible "Tool: …" row that never collapsed; all calls now live in a
+  single collapsed "Tool activity (N)" block, with only the one-line provenance
+  summary visible by default.
+- **The UI is now theme-aware (dark mode works).** The stylesheet hardcoded a
+  light-only palette (`#fafafa`, `#fff`, `#2266cc`, …); it now uses Fava's CSS
+  custom properties (`--background`, `--text-color`, `--border`, `--link-color`,
+  `--code-background`, `--font-family`, …) with fallbacks, so it follows Fava's
+  light/dark theme and typography.
 - **Merchants & recurring pages were empty for narration-only ledgers.**
   `merchant_key()` now falls back to a merchant derived from the narration
   (stripping card/terminal numbers and delimiters) when `payee` is empty, and
