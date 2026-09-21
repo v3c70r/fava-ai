@@ -71,7 +71,7 @@ def test_tool_call_accumulator_handles_multiple_parallel_calls():
 
 def test_litellm_chat_stream_assembles_fragments(monkeypatch):
     import fava_ai.models.litellm_base as base
-    from fava_ai.models.openai import OpenAIProvider
+    from fava_ai.models.openai_compat import OpenAICompatProvider
 
     def _chunk(content=None, tool_calls=None, finish_reason=None):
         delta = SimpleNamespace(content=content, tool_calls=tool_calls)
@@ -86,7 +86,7 @@ def test_litellm_chat_stream_assembles_fragments(monkeypatch):
     ]
     monkeypatch.setattr(base.litellm, "completion", lambda **kw: iter(chunks))
 
-    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    provider = OpenAICompatProvider(api_key="sk-x", model="gpt-4o")
     out = list(provider.chat_stream([Message(role="user", content="hi")]))
 
     assert all(c.content is None for c in out)
@@ -98,7 +98,7 @@ def test_litellm_chat_stream_assembles_fragments(monkeypatch):
 
 def test_litellm_chat_stream_yields_reasoning_deltas(monkeypatch):
     import fava_ai.models.litellm_base as base
-    from fava_ai.models.openai import OpenAIProvider
+    from fava_ai.models.openai_compat import OpenAICompatProvider
 
     def _chunk(reasoning=None, content=None, finish_reason=None):
         delta = SimpleNamespace(
@@ -115,7 +115,7 @@ def test_litellm_chat_stream_yields_reasoning_deltas(monkeypatch):
         _chunk(finish_reason="stop"),
     ]))
 
-    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    provider = OpenAICompatProvider(api_key="sk-x", model="gpt-4o")
     out = list(provider.chat_stream([Message(role="user", content="hi")]))
 
     reasoning = "".join(c.reasoning for c in out if c.reasoning)
@@ -125,7 +125,7 @@ def test_litellm_chat_stream_yields_reasoning_deltas(monkeypatch):
 
 def test_litellm_chat_captures_reasoning(monkeypatch):
     import fava_ai.models.litellm_base as base
-    from fava_ai.models.openai import OpenAIProvider
+    from fava_ai.models.openai_compat import OpenAICompatProvider
 
     message = SimpleNamespace(
         content="4", tool_calls=None, reasoning_content="2+2 is 4"
@@ -136,7 +136,7 @@ def test_litellm_chat_captures_reasoning(monkeypatch):
     )
     monkeypatch.setattr(base.litellm, "completion", lambda **kw: response)
 
-    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    provider = OpenAICompatProvider(api_key="sk-x", model="gpt-4o")
     result = provider.chat([Message(role="user", content="2+2?")])
 
     assert result.content == "4"
@@ -145,7 +145,7 @@ def test_litellm_chat_captures_reasoning(monkeypatch):
 
 def test_litellm_chat_stream_yields_content_deltas(monkeypatch):
     import fava_ai.models.litellm_base as base
-    from fava_ai.models.openai import OpenAIProvider
+    from fava_ai.models.openai_compat import OpenAICompatProvider
 
     def _chunk(content=None, finish_reason=None):
         delta = SimpleNamespace(content=content, tool_calls=None)
@@ -158,7 +158,7 @@ def test_litellm_chat_stream_yields_content_deltas(monkeypatch):
         lambda **kw: iter([_chunk("Hel"), _chunk("lo"), _chunk(finish_reason="stop")]),
     )
 
-    provider = OpenAIProvider(api_key="sk-x", model="gpt-4o")
+    provider = OpenAICompatProvider(api_key="sk-x", model="gpt-4o")
     out = list(provider.chat_stream([Message(role="user", content="hi")]))
 
     assert "".join(c.content for c in out if c.content) == "Hello"

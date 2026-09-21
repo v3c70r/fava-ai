@@ -25,15 +25,41 @@ DEFAULT_CONFIG: dict[str, dict] = {
     },
 }
 
-#: Providers the registry knows how to construct.
-KNOWN_PROVIDERS = {"ollama", "openai", "anthropic", "deepseek", "openai_compat"}
+#: The only provider implementation. Every vendor offers an OpenAI-compatible
+#: endpoint, so a configured `base_url` + `api_key` + `model` is enough.
+CANONICAL_PROVIDER = "openai_compat"
+
+#: Accepted provider names. Legacy vendor names are aliases for the canonical
+#: implementation and get a sensible default base URL.
+PROVIDER_ALIASES: dict[str, str] = {
+    "openai_compat": CANONICAL_PROVIDER,
+    "ollama": CANONICAL_PROVIDER,
+    "openai": CANONICAL_PROVIDER,
+    "deepseek": CANONICAL_PROVIDER,
+    "anthropic": CANONICAL_PROVIDER,
+}
+
+#: Backwards-compatible name kept for validation/config tooling.
+KNOWN_PROVIDERS = set(PROVIDER_ALIASES)
+
+#: Default base URLs for well-known vendors (all OpenAI-compatible).
+KNOWN_BASE_URLS: dict[str, str] = {
+    "ollama": "http://localhost:11434/v1",
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+}
 
 _ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools"}
 _ALLOWED_PROVIDER_KEYS = {"type", "api_key", "base_url", "model", "timeout", "test_connection_method"}
-_ALLOWED_AGENT_KEYS = {
-    "max_iterations", "max_tool_calls", "timeout_seconds", "system_prompt", "retries",
-    "max_context_tokens", "max_tool_result_chars", "max_tokens",
-}
+#: Flat keys accepted directly in the beancount extension directive.
+_FLAT_PROVIDER_KEYS = ("type", "api_key", "base_url", "model", "timeout", "test_connection_method")
+_FLAT_AGENT_KEYS = (
+    "max_iterations", "max_tool_calls", "timeout_seconds", "system_prompt",
+    "max_context_tokens", "max_tool_result_chars", "retries", "max_tokens",
+)
+
+_ALLOWED_AGENT_KEYS = set(_FLAT_AGENT_KEYS)
 _ALLOWED_KNOWLEDGE_KEYS = {"auto_extract"}
 _ALLOWED_TOOLS_KEYS = {"external_enabled"}
 
@@ -42,12 +68,40 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def validate_config(data) -> list[str]:
-    """Validate a config document written via the API.
+def resolve_provider_type(name: str, cfg: dict) -> tuple[str | None, str | None]:
+    """Resolve a provider entry to its canonical type.
 
-    Returns a list of human-readable problems; empty means valid. Kept
-    intentionally small and dependency-free so the config file cannot be
-    replaced with arbitrary or malformed content.
+    Returns ``(canonical_type, error)``; ``canonical_type`` is None on error.
+    A name that is a known vendor (or a known ``type``) resolves directly. An
+    arbitrary name is treated as an OpenAI-compatible endpoint when it supplies
+    a ``base_url``; otherwise it is an error (likely a typo).
+    """
+    ptype = cfg.get("type")
+    if ptype is not None:
+        canonical = PROVIDER_ALIASES.get(ptype)
+        if canonical is None:
+            return None, f"provider '{name}' has invalid type: '{ptype}'"
+        return canonical, None
+    canonical = PROVIDER_ALIASES.get(name)
+    if canonical is not None:
+        return canonical, None
+    if cfg.get("base_url"):
+        return CANONICAL_PROVIDER, None
+    return None, f"unknown provider '{name}': set 'type' or 'base_url'"
+
+
+def provider_base_url(name: str, cfg: dict) -> str:
+    """Explicit base_url, else the well-known default for the provider name."""
+    base_url = cfg.get("base_url")
+    if base_url:
+        return base_url
+    return KNOWN_BASE_URLS.get(name, "")
+
+
+def validate_config(data) -> list[str]:
+    """Validate a config document (API writes and directive overlays).
+
+    Returns a list of human-readable problems; empty means valid.
     """
     errors: list[str] = []
     if not isinstance(data, dict):
@@ -66,20 +120,9 @@ def validate_config(data) -> list[str]:
                 if not isinstance(cfg, dict):
                     errors.append(f"provider '{name}' must be a mapping")
                     continue
-                # Arbitrary aliases are allowed when an explicit 'type' names a
-                # known provider implementation.
-                ptype = cfg.get("type")
-                if name in KNOWN_PROVIDERS:
-                    if ptype is not None and ptype not in KNOWN_PROVIDERS:
-                        errors.append(f"provider '{name}' has invalid type: '{ptype}'")
-                elif ptype is None:
-                    errors.append(
-                        f"unknown provider '{name}': add a 'type' field "
-                        f"(one of {sorted(KNOWN_PROVIDERS)})"
-                    )
-                elif ptype not in KNOWN_PROVIDERS:
-                    errors.append(f"provider '{name}' has invalid type: '{ptype}'")
-
+                _canonical, error = resolve_provider_type(name, cfg)
+                if error:
+                    errors.append(error)
                 extra = set(cfg) - _ALLOWED_PROVIDER_KEYS
                 if extra:
                     errors.append(f"provider '{name}' has unknown keys: {sorted(extra)}")
@@ -95,10 +138,9 @@ def validate_config(data) -> list[str]:
             extra = set(agent) - _ALLOWED_AGENT_KEYS
             if extra:
                 errors.append(f"'agent' has unknown keys: {sorted(extra)}")
-            for key in (
-                "max_iterations", "max_tool_calls", "timeout_seconds", "retries",
-                "max_context_tokens", "max_tool_result_chars", "max_tokens",
-            ):
+            for key in _FLAT_AGENT_KEYS:
+                if key == "system_prompt":
+                    continue
                 if key in agent and (not _is_int(agent[key]) or agent[key] < 1):
                     errors.append(f"'agent.{key}' must be a positive integer")
             if "system_prompt" in agent and not isinstance(agent["system_prompt"], str):
@@ -130,9 +172,21 @@ def validate_config(data) -> list[str]:
 
 
 class ConfigManager:
-    def __init__(self, ledger, extension_config: dict, config_dir: Path):
+    """Resolve configuration from three layers.
+
+    Precedence (lowest to highest): built-in defaults, the beancount
+    ``fava-extension`` directive, then an optional ``.fava-ai/config.yaml``.
+
+    The directive is the primary source: a single OpenAI-compatible endpoint
+    can be declared entirely in the ledger. ``config.yaml`` is optional and
+    only needed to override or to hold secrets out of the ledger.
+    """
+
+    def __init__(self, ledger, extension_config: dict | None, config_dir: Path):
         self._ledger = ledger
-        self._extension_config = extension_config
+        # ``${ENV_VAR}`` references are resolved in the directive too, so
+        # secrets can stay out of the (usually committed) ledger.
+        self._extension_config = self._substitute_env(extension_config or {})
         self._config_dir = Path(config_dir)
         # Raw (un-substituted) config as read from disk. Kept so writes can
         # preserve ``${ENV_VAR}`` references instead of overwriting them with
@@ -172,54 +226,82 @@ class ConfigManager:
         providers = self._raw_config.get("providers", {})
         return providers if isinstance(providers, dict) else {}
 
+    # ── providers ─────────────────────────────────────────────────
+
     def get_provider_config(self) -> dict:
-        providers = {}
+        """Merge provider entries from the directive and config.yaml.
+
+        Supports three shapes:
+        * flat single endpoint in the directive (``provider`` + ``base_url`` …)
+        * a nested ``providers`` mapping in the directive
+        * a nested ``providers`` mapping in config.yaml (highest precedence)
+        """
         bc = self._extension_config
-        if bc.get("provider"):
-            providers[bc["provider"]] = {"model": bc.get("model", "")}
+        providers: dict[str, dict] = {}
+
+        name = bc.get("provider")
+        if name:
+            cfg = {k: bc[k] for k in _FLAT_PROVIDER_KEYS if k in bc}
+            providers[name] = cfg
+
+        bc_providers = bc.get("providers")
+        if isinstance(bc_providers, dict):
+            for provider_name, cfg in bc_providers.items():
+                if isinstance(cfg, dict):
+                    providers.setdefault(provider_name, {}).update(cfg)
 
         yaml_providers = self._yaml_config.get("providers", {})
-        for name, cfg in yaml_providers.items():
-            if name in providers:
-                providers[name].update(cfg)
-            else:
-                providers[name] = dict(cfg)
+        if isinstance(yaml_providers, dict):
+            for provider_name, cfg in yaml_providers.items():
+                if isinstance(cfg, dict):
+                    providers.setdefault(provider_name, {}).update(cfg)
         return providers
+
+    # ── agent / knowledge / tools ─────────────────────────────────
 
     def get_agent_config(self) -> dict:
         config = dict(DEFAULT_CONFIG["agent"])
         bc = self._extension_config
-        for key in ["max_iterations", "max_tool_calls", "timeout_seconds"]:
+        # Flat keys (legacy directive form).
+        for key in _FLAT_AGENT_KEYS:
             if key in bc:
                 config[key] = bc[key]
-        if "system_prompt" in bc:
-            config["system_prompt"] = bc["system_prompt"]
-
+        # Nested directive form.
+        bc_agent = bc.get("agent")
+        if isinstance(bc_agent, dict):
+            config.update(bc_agent)
+        # config.yaml overrides both.
         yaml_agent = self._yaml_config.get("agent", {})
-        config.update(yaml_agent)
+        if isinstance(yaml_agent, dict):
+            config.update(yaml_agent)
         return config
 
     def get_knowledge_config(self) -> dict:
         config = dict(DEFAULT_CONFIG["knowledge"])
+        bc = self._extension_config
+        if "auto_extract" in bc:
+            config["auto_extract"] = bc["auto_extract"]
+        if isinstance(bc.get("knowledge"), dict):
+            config.update(bc["knowledge"])
         yaml_knowledge = self._yaml_config.get("knowledge", {})
-        config.update(yaml_knowledge)
+        if isinstance(yaml_knowledge, dict):
+            config.update(yaml_knowledge)
         return config
 
     def get_tools_config(self) -> dict:
         config = dict(DEFAULT_CONFIG["tools"])
+        bc = self._extension_config
+        if "external_enabled" in bc:
+            config["external_enabled"] = bc["external_enabled"]
+        if isinstance(bc.get("tools"), dict):
+            config.update(bc["tools"])
         yaml_tools = self._yaml_config.get("tools", {})
         if isinstance(yaml_tools, dict):
             config.update(yaml_tools)
         return config
 
     def get(self, key: str, default=None):
-        """Look up a dotted key in the YAML config, falling back to the
-        beancount extension config.
-
-        Unlike a naive ``dict.get`` chain, a present-but-falsy YAML value
-        (``false``, ``0``, ``""``) is returned as-is instead of being treated
-        as missing.
-        """
+        """Look up a dotted key, preferring config.yaml then the directive."""
         yaml_val: object = self._yaml_config
         found = True
         for part in key.split("."):

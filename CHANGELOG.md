@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Configuration is now primarily the beancount directive.** The `fava-extension`
+  line accepts flat single-endpoint keys (`provider`, `base_url`, `api_key`, `model`) and
+  nested `providers` / `agent` / `knowledge` / `tools` sections. `${ENV_VAR}` is expanded
+  there too, so secrets can stay out of the ledger. `.fava-ai/config.yaml` is now optional
+  and only overrides the directive key-by-key.
+- **Providers unified into a single OpenAI-compatible implementation.** Every vendor
+  (OpenAI, DeepSeek, Ollama, Anthropic, llama.cpp, LM Studio, vLLM, OpenRouter) is
+  configured with `base_url` + `api_key` + `model`. Legacy names (`openai`, `deepseek`,
+  `anthropic`, `ollama`) are kept as aliases that supply a default base URL. Removed
+  `models/openai.py`, `models/anthropic.py`, `models/deepseek.py`, `models/ollama.py`.
+- Model listing and the connection check now use the OpenAI-compatible `/models`
+  endpoint (with a 1-token completion fallback), so the model picker works for every
+  endpoint.
+
 ### Added
 - Reasoning-model support: `reasoning_content` is captured (`ChatResponse.reasoning`),
   streamed as `reasoning_delta` SSE events, and shown as a collapsible "Thinking…"

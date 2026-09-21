@@ -65,23 +65,9 @@ def build_stack(args):
 
     extension_config = {
         "provider": "local",
+        "base_url": args.base_url,
+        "api_key": args.api_key or "",
         "model": args.model,
-        "max_iterations": args.max_iterations,
-        "timeout_seconds": args.timeout,
-    }
-    config_dir = Path(args.config_dir)
-    config_dir.mkdir(parents=True, exist_ok=True)
-    import yaml
-    (config_dir / "config.yaml").write_text(yaml.dump({
-        "providers": {
-            # Arbitrary alias resolved via `type` (exercises provider aliases).
-            "local": {
-                "type": "openai_compat",
-                "base_url": args.base_url,
-                "api_key": args.api_key or "",
-                "model": args.model,
-            }
-        },
         "agent": {
             "max_iterations": args.max_iterations,
             "max_tool_calls": 12,
@@ -89,8 +75,10 @@ def build_stack(args):
             "max_context_tokens": 24000,
         },
         "knowledge": {"auto_extract": True},
-    }))
-
+    }
+    config_dir = Path(args.config_dir)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    # Everything comes from the directive: no config.yaml is written.
     cm = ConfigManager(ledger, extension_config, config_dir)
 
     wiki = WikiManager(config_dir / "wiki")

@@ -39,7 +39,6 @@ ledger = MockLedger()
 from fava_ai.agent.context import ContextBuilder
 from fava_ai.agent.runtime import AgentRuntime
 from fava_ai.config import ConfigManager
-from fava_ai.models.deepseek import DeepSeekProvider
 from fava_ai.models.registry import ProviderRegistry
 from fava_ai.storage.database import Database
 from fava_ai.tools.builtin.ledger import register_ledger_tools
@@ -69,13 +68,6 @@ db = Database(config_dir / "conversations.db")
 db.initialize()
 
 provider_registry = ProviderRegistry(config_manager)
-provider_registry.register(
-    "deepseek",
-    DeepSeekProvider(
-        api_key=os.environ["DEEPSEEK_API_KEY"],
-        model="deepseek-chat",
-    ),
-)
 
 tool_registry = ToolRegistry()
 register_ledger_tools(tool_registry, ledger)

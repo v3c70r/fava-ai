@@ -82,6 +82,91 @@ def test_get_returns_present_falsy_values(tmp_dir):
     assert cm.get("unknown", "d") == "d"
 
 
+def test_resolve_provider_type_and_base_url():
+    from fava_ai.config import provider_base_url, resolve_provider_type
+
+    # Vendors are aliases for the single OpenAI-compatible implementation.
+    assert resolve_provider_type("ollama", {}) == ("openai_compat", None)
+    assert resolve_provider_type("openai", {}) == ("openai_compat", None)
+    assert resolve_provider_type(
+        "local", {"base_url": "http://x/v1"}
+    ) == ("openai_compat", None)
+
+    # Unknown name without type/base_url is an error (likely a typo).
+    canonical, error = resolve_provider_type("mystery", {})
+    assert canonical is None and error
+
+    _canonical, error = resolve_provider_type("x", {"type": "nope"})
+    assert error
+
+    assert provider_base_url("ollama", {}) == "http://localhost:11434/v1"
+    assert provider_base_url("openai", {}) == "https://api.openai.com/v1"
+    assert provider_base_url("local", {"base_url": "http://x/v1"}) == "http://x/v1"
+    assert provider_base_url("local", {}) == ""
+
+
+def test_directive_nested_sections(tmp_dir):
+    bc = {
+        "provider": "local",
+        "providers": {"local": {"base_url": "http://x/v1", "model": "m"}},
+        "agent": {"timeout_seconds": 600, "max_iterations": 3},
+        "knowledge": {"auto_extract": False},
+        "tools": {"external_enabled": True},
+    }
+    cm = ConfigManager(None, bc, tmp_dir)
+
+    assert cm.get_provider_config()["local"]["base_url"] == "http://x/v1"
+    assert cm.get_agent_config()["timeout_seconds"] == 600
+    assert cm.get_agent_config()["max_iterations"] == 3
+    assert cm.get_knowledge_config()["auto_extract"] is False
+    assert cm.get_tools_config()["external_enabled"] is True
+
+
+def test_directive_flat_single_endpoint(tmp_dir):
+    bc = {
+        "provider": "local",
+        "base_url": "http://localhost:8080/v1",
+        "api_key": "k",
+        "model": "m",
+    }
+    cm = ConfigManager(None, bc, tmp_dir)
+    cfg = cm.get_provider_config()["local"]
+    assert cfg["base_url"] == "http://localhost:8080/v1"
+    assert cfg["api_key"] == "k"
+    assert cfg["model"] == "m"
+
+
+def test_directive_env_substitution(tmp_dir, monkeypatch):
+    monkeypatch.setenv("MY_KEY", "secret")
+    bc = {
+        "provider": "local",
+        "base_url": "http://x/v1",
+        "api_key": "${MY_KEY}",
+        "model": "m",
+    }
+    cm = ConfigManager(None, bc, tmp_dir)
+    assert cm.get_provider_config()["local"]["api_key"] == "secret"
+
+
+def test_yaml_overrides_directive(tmp_dir):
+    (tmp_dir / "config.yaml").write_text(
+        "agent:\n  max_iterations: 99\n"
+        "providers:\n  local:\n    model: from-yaml\n"
+    )
+    cm = ConfigManager(None, {
+        "provider": "local",
+        "base_url": "http://x/v1",
+        "model": "from-bc",
+        "agent": {"max_iterations": 3},
+    }, tmp_dir)
+
+    assert cm.get_agent_config()["max_iterations"] == 99
+    provider = cm.get_provider_config()["local"]
+    assert provider["model"] == "from-yaml"
+    # Non-overridden keys survive from the directive.
+    assert provider["base_url"] == "http://x/v1"
+
+
 def test_raw_provider_config_keeps_env_reference(tmp_dir, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "resolved-value")
     (tmp_dir / "config.yaml").write_text(
