@@ -50,14 +50,19 @@ class ProviderRegistry:
         """Record a freshly observed connection status for a provider."""
         self._connection_cache[name] = bool(connected)
 
+    def _default_alias(self) -> str | None:
+        """Alias of the default provider: the configured one, else the first."""
+        name = self._config_manager._extension_config.get("provider")
+        if name and name in self._providers:
+            return name
+        return next(iter(self._providers), None)
+
     def get_default(self) -> BaseProvider | None:
-        bc = self._config_manager._extension_config
-        default_name = bc.get("provider", "ollama")
-        return self.get(default_name) or (list(self._providers.values())[0] if self._providers else None)
+        alias = self._default_alias()
+        return self._providers.get(alias) if alias else None
 
     def list_providers(self) -> list[dict]:
-        bc = self._config_manager._extension_config
-        default_name = bc.get("provider", "ollama")
+        default_name = self._default_alias()
         result = []
         for name, provider in self._providers.items():
             connected = self._connection_cache.get(name)

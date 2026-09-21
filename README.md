@@ -5,7 +5,7 @@ An extensible, local-first AI agent platform integrated into [Fava](https://gith
 - **Local-first** — no cloud required (Ollama, llama.cpp, LM Studio)
 - **Read-only** — never modifies your beancount files
 - **Ledger-aware** — executes BQL queries, browses accounts, searches transactions
-- **Multi-provider** — Ollama, OpenAI, Anthropic, DeepSeek, or any OpenAI-compatible endpoint
+- **Multi-provider** — OpenAI, Anthropic, DeepSeek, Google, Groq, OpenRouter, or any OpenAI-compatible endpoint (including local servers)
 - **Transparent** — every response includes full provenance (tools called, BQL queries, data sources)
 - **Extensible** — plugin-based tools, installable prompts, external tool plugins
 
@@ -67,49 +67,74 @@ EOF
 
 ## Provider Configuration
 
-Every supported vendor (OpenAI, DeepSeek, Ollama, Anthropic, llama.cpp, LM Studio,
-vLLM, OpenRouter, …) is reached through a single **OpenAI-compatible** provider:
-you configure a `base_url`, `api_key` and `model`.
+Every supported vendor is reached through a single **OpenAI-compatible** provider:
+configure a `base_url`, `api_key` and `model`. Local servers (Ollama, llama.cpp,
+LM Studio, vLLM, …) are no different — they are just a `base_url`.
+
+### Local endpoints
 
 ```yaml
+# Ollama (its OpenAI-compatible API is served under /v1)
+providers:
+  local:
+    base_url: http://localhost:11434/v1
+    model: llama3
+
+# llama.cpp / LM Studio / vLLM
 providers:
   local:
     base_url: http://localhost:8080/v1
-    api_key: ${LOCAL_API_KEY}
+    api_key: ${LOCAL_API_KEY}   # omit if the server needs none
     model: my-model
 ```
 
-### Vendor shortcuts
+### Hosted providers
 
-Legacy vendor names are accepted as aliases for the same provider and fill in a
-default base URL, so no `base_url` is needed:
-
-| Name | Default base URL |
-|---|---|
-| `openai` | `https://api.openai.com/v1` |
-| `deepseek` | `https://api.deepseek.com/v1` |
-| `anthropic` | `https://api.anthropic.com/v1` |
-| `ollama` | `http://localhost:11434/v1` |
-| `openai_compat` / any name + `base_url` | (you provide it) |
+Well-known vendors are recognised by name and fill in a default base URL, so you
+only need the key and the model. Any `${ENV_VAR}` is expanded, so secrets can
+stay out of your ledger:
 
 ```yaml
-# DeepSeek: base_url inferred from the name
 providers:
   deepseek:
     api_key: ${DEEPSEEK_API_KEY}
     model: deepseek-chat
 ```
 
+| Name | Default base URL | API key env var |
+|---|---|---|
+| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
+| `deepseek` | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| `google` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` |
+| `groq` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| `mistral` | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
+| `xai` | `https://api.x.ai/v1` | `XAI_API_KEY` |
+| `together` | `https://api.together.ai/v1` | `TOGETHER_API_KEY` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| `cerebras` | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| `nvidia` | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` |
+| `moonshotai` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
+| `fireworks` | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| `baseten` | `https://inference.baseten.co/v1` | `BASETEN_API_KEY` |
+| `huggingface` | `https://router.huggingface.co/v1` | `HF_TOKEN` |
+| `vercel-ai-gateway` | `https://ai-gateway.vercel.sh/v1` | `AI_GATEWAY_API_KEY` |
+| `meta` | `https://api.meta.ai/v1` | `META_API_KEY` |
+| `xiaomi` | `https://api.xiaomimimo.com/v1` | `XIAOMI_API_KEY` |
+
+Any other OpenAI-compatible endpoint works too — give it any name plus a
+`base_url` (or an explicit `type: openai_compat`):
+
 ```yaml
-# Local llama.cpp / LM Studio / Ollama: explicit base_url, arbitrary name
 providers:
-  local:
-    base_url: http://localhost:8080/v1
-    api_key: ${LOCAL_API_KEY}
-    model: Ternary-Bonsai-2-27B
+  my-gateway:
+    type: openai_compat
+    base_url: https://llm.internal.example/v1
+    api_key: ${MY_GATEWAY_KEY}
+    model: llama-3.1-70b
 ```
 
-> Anthropic is reached via its OpenAI-compatible endpoint; litellm's native
+> Anthropic is reached via its OpenAI-compatible endpoint. litellm's native
 > Anthropic provider exposes slightly more, so prefer an OpenAI-compatible
 > gateway if you hit limitations.
 

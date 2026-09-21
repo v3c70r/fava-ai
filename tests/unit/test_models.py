@@ -82,24 +82,40 @@ def test_provider_registry():
     from fava_ai.config import ConfigManager
     from fava_ai.models.registry import ProviderRegistry
 
-    cm = ConfigManager(None, {"provider": "ollama"}, __import__("pathlib").Path("/tmp"))
+    cm = ConfigManager(None, {"provider": "openai"}, __import__("pathlib").Path("/tmp"))
     reg = ProviderRegistry(cm)
-    ollama = reg.get("ollama")
-    assert ollama is not None
-    # The alias resolves to the single OpenAI-compatible implementation.
-    assert ollama.provider_name == "openai_compat"
-    assert ollama.base_url == "http://localhost:11434/v1"
+    openai = reg.get("openai")
+    assert openai is not None
+    # The vendor alias resolves to the single OpenAI-compatible implementation.
+    assert openai.provider_name == "openai_compat"
+    assert openai.base_url == "https://api.openai.com/v1"
 
 
 def test_provider_registry_default():
     from fava_ai.config import ConfigManager
     from fava_ai.models.registry import ProviderRegistry
 
-    cm = ConfigManager(None, {"provider": "ollama"}, __import__("pathlib").Path("/tmp"))
+    cm = ConfigManager(None, {"provider": "openai"}, __import__("pathlib").Path("/tmp"))
     reg = ProviderRegistry(cm)
     default = reg.get_default()
     assert default is not None
     assert default.provider_name == "openai_compat"
+
+
+def test_provider_registry_default_is_first_when_unspecified(tmp_dir):
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {
+        "providers": {
+            "a": {"base_url": "http://a/v1", "model": "m"},
+            "b": {"base_url": "http://b/v1", "model": "m"},
+        }
+    }, tmp_dir)
+    reg = ProviderRegistry(cm)
+    assert reg.get_default() is reg.get("a")
+    assert [p["name"] for p in reg.list_providers()] == ["a", "b"]
+    assert reg.list_providers()[0]["is_default"] is True
 
 
 def test_provider_registry_flat_single_endpoint(tmp_dir):
@@ -127,11 +143,11 @@ def test_provider_registry_list():
     from fava_ai.config import ConfigManager
     from fava_ai.models.registry import ProviderRegistry
 
-    cm = ConfigManager(None, {"provider": "ollama"}, __import__("pathlib").Path("/tmp"))
+    cm = ConfigManager(None, {"provider": "openai"}, __import__("pathlib").Path("/tmp"))
     reg = ProviderRegistry(cm)
     providers = reg.list_providers()
     assert len(providers) == 1
-    assert providers[0]["name"] == "ollama"
+    assert providers[0]["name"] == "openai"
     assert providers[0]["is_default"] is True
 
 
