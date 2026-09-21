@@ -86,7 +86,9 @@ def test_provider_registry():
     reg = ProviderRegistry(cm)
     ollama = reg.get("ollama")
     assert ollama is not None
-    assert ollama.provider_name == "ollama"
+    # The alias resolves to the single OpenAI-compatible implementation.
+    assert ollama.provider_name == "openai_compat"
+    assert ollama.base_url == "http://localhost:11434/v1"
 
 
 def test_provider_registry_default():
@@ -97,7 +99,28 @@ def test_provider_registry_default():
     reg = ProviderRegistry(cm)
     default = reg.get_default()
     assert default is not None
-    assert default.provider_name == "ollama"
+    assert default.provider_name == "openai_compat"
+
+
+def test_provider_registry_flat_single_endpoint(tmp_dir):
+    """A single endpoint can be declared flat in the beancount directive."""
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {
+        "provider": "local",
+        "base_url": "http://localhost:8080/v1",
+        "api_key": "k",
+        "model": "my-model",
+    }, tmp_dir)
+    reg = ProviderRegistry(cm)
+
+    provider = reg.get("local")
+    assert provider is not None
+    assert provider.base_url == "http://localhost:8080/v1"
+    assert provider.api_key == "k"
+    # Arbitrary name + base_url needs no explicit type.
+    assert provider.provider_name == "openai_compat"
 
 
 def test_provider_registry_list():

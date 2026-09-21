@@ -23,101 +23,118 @@ uv pip install -e .
 
 ### 2. Add the extension to your Beancount file
 
-Add this line to your ledger file (e.g., `main.beancount`):
+All configuration can live in the ledger — no separate config file required.
+Declare one OpenAI-compatible endpoint directly in the directive:
 
 ```beancount
 2010-01-01 custom "fava-extension" "fava_ai" "{
-    'provider': 'ollama',
+    'provider': 'local',
+    'base_url': 'http://localhost:11434/v1',
+    'api_key': '${OLLAMA_API_KEY}',
     'model': 'llama3',
-    'config_dir': '.fava-ai'
+    'agent': {'timeout_seconds': 300}
 }"
 ```
 
-### 3. Create provider config
+Use `${ENV_VAR}` for secrets so the (usually committed) ledger never contains
+them. Omit `api_key` entirely for local servers that don't require one.
 
-```bash
-mkdir -p /path/to/your/ledger/.fava-ai
-cat > /path/to/your/ledger/.fava-ai/config.yaml << 'EOF'
-providers:
-  ollama:
-    base_url: http://localhost:11434
-    model: llama3
-agent:
-  max_iterations: 10
-  max_tool_calls: 20
-knowledge:
-  auto_extract: true
-EOF
-```
-
-### 4. Run Fava
+### 3. Run Fava
 
 ```bash
 fava /path/to/your/ledger/main.beancount
 # Open http://localhost:5000 → click "AI Assistant" in sidebar
 ```
 
+That's it — the plugin creates `.fava-ai/` next to the ledger for its
+conversation database and generated knowledge base (it does **not** write to
+the ledger).
+
+### Optional: override via `.fava-ai/config.yaml`
+
+A `config.yaml` is **optional**. If present it overrides the directive
+key-by-key, which is useful for secrets you'd rather keep out of git or for
+changing settings from the UI:
+
+```bash
+mkdir -p /path/to/your/ledger/.fava-ai
+cat > /path/to/your/ledger/.fava-ai/config.yaml << 'EOF'
+providers:
+  local:
+    api_key: ${LOCAL_API_KEY}
+EOF
+```
+
 ## Provider Configuration
 
-### Ollama (local)
+Every supported vendor (OpenAI, DeepSeek, Ollama, Anthropic, llama.cpp, LM Studio,
+vLLM, OpenRouter, …) is reached through a single **OpenAI-compatible** provider:
+you configure a `base_url`, `api_key` and `model`.
 
 ```yaml
 providers:
-  ollama:
-    base_url: http://localhost:11434
-    model: llama3
-```
-
-### llama.cpp / LM Studio (OpenAI-compatible)
-
-```yaml
-providers:
-  openai_compat:
+  local:
     base_url: http://localhost:8080/v1
-    api_key: sk-no-key
-    model: gemma-4-e2b
+    api_key: ${LOCAL_API_KEY}
+    model: my-model
 ```
 
-### OpenAI
+### Vendor shortcuts
+
+Legacy vendor names are accepted as aliases for the same provider and fill in a
+default base URL, so no `base_url` is needed:
+
+| Name | Default base URL |
+|---|---|
+| `openai` | `https://api.openai.com/v1` |
+| `deepseek` | `https://api.deepseek.com/v1` |
+| `anthropic` | `https://api.anthropic.com/v1` |
+| `ollama` | `http://localhost:11434/v1` |
+| `openai_compat` / any name + `base_url` | (you provide it) |
 
 ```yaml
-providers:
-  openai:
-    api_key: ${OPENAI_API_KEY}
-    model: gpt-4o
-```
-
-### Anthropic
-
-```yaml
-providers:
-  anthropic:
-    api_key: ${ANTHROPIC_API_KEY}
-    model: claude-sonnet-4-20250514
-```
-
-### DeepSeek
-
-```yaml
+# DeepSeek: base_url inferred from the name
 providers:
   deepseek:
     api_key: ${DEEPSEEK_API_KEY}
     model: deepseek-chat
 ```
+
+```yaml
+# Local llama.cpp / LM Studio / Ollama: explicit base_url, arbitrary name
+providers:
+  local:
+    base_url: http://localhost:8080/v1
+    api_key: ${LOCAL_API_KEY}
+    model: Ternary-Bonsai-2-27B
+```
+
+> Anthropic is reached via its OpenAI-compatible endpoint; litellm's native
+> Anthropic provider exposes slightly more, so prefer an OpenAI-compatible
+> gateway if you hit limitations.
 
 ### Multiple providers
 
-Configure multiple providers and switch between them in the UI or via the `provider` parameter in chat requests:
+Configure several endpoints and switch between them in the UI (or via the
+`provider` parameter in chat requests). The `provider` key selects the default:
 
 ```yaml
+provider: local
 providers:
-  ollama:
-    base_url: http://localhost:11434
-    model: llama3
+  local:
+    base_url: http://localhost:8080/v1
+    api_key: ${LOCAL_API_KEY}
+    model: my-model
   deepseek:
     api_key: ${DEEPSEEK_API_KEY}
     model: deepseek-chat
 ```
+
+### Precedence
+
+Built-in defaults → **beancount directive** → optional `.fava-ai/config.yaml`
+(highest). `${ENV_VAR}` references are expanded in both the directive and the
+YAML file.
 
 ## What It Can Do
 
@@ -260,10 +277,10 @@ SELECT DISTINCT payee
 
 ```
 my-finances/
-├── main.beancount              # Your ledger with extension directive
+├── main.beancount              # Your ledger; may hold the full extension config
 ├── fava_ai/                    # Git submodule or pip-installed package
-├── .fava-ai/
-│   ├── config.yaml             # Provider keys and settings
+├── .fava-ai/                   # Runtime state (created automatically)
+│   ├── config.yaml             # Optional overrides / secrets
 │   ├── conversations.db        # Chat history (SQLite)
 │   ├── wiki/                   # Auto-generated knowledge base
 │   ├── prompts/                # Custom system prompts
@@ -280,16 +297,20 @@ git submodule add https://github.com/v3c70r/fava-ai.git fava_ai
 uv pip install litellm pyyaml
 ```
 
-Commit `fava_ai/`, `.fava-ai/config.yaml` (without secrets), `.gitignore`, and `.gitmodules`.
+Commit `fava_ai/`, your ledger (with the `fava-extension` directive), `.gitignore`, and `.gitmodules`.
+A `.fava-ai/config.yaml` is optional — only commit it if it contains no secrets.
 
 ### What to gitignore
 
 ```gitignore
-.fava-ai/config.yaml        # Contains API keys
+.fava-ai/config.yaml        # Optional; may contain API keys
 .fava-ai/conversations.db   # Personal chat history
 ```
 
-The wiki (`wiki/`) should be committed — it's versioned knowledge that compounds over time.
+Prefer putting provider settings (with `${ENV_VAR}` for secrets) directly in the
+ledger directive, and keep `config.yaml` untracked for anything secret.
+
+The wiki (`wiki/`) may be committed — it's generated knowledge that compounds over time.
 
 ## Requirements
 
@@ -313,18 +334,9 @@ pytest -q
 pytest -q -m slow   # performance smoke tests (excluded by default)
 pytest -q --cov=fava_ai --cov-report=term-missing
 
-# Run with a test fixture
-mkdir -p .fava-ai
-cat > .fava-ai/config.yaml <<'YAML'
-providers:
-  ollama:
-    base_url: http://localhost:11434
-    model: llama3
-YAML
-
-# Add extension directive and run
+# Add extension directive and run (config lives in the directive)
 cat tests/data/ledgers/beancount-example.beancount > /tmp/test.beancount
-echo "2010-01-01 custom \"fava-extension\" \"fava_ai\" \"{'provider': 'ollama'}\"" >> /tmp/test.beancount
+echo "2010-01-01 custom \"fava-extension\" \"fava_ai\" \"{'provider': 'local', 'base_url': 'http://localhost:11434/v1', 'model': 'llama3'}\"" >> /tmp/test.beancount
 fava /tmp/test.beancount
 ```
 

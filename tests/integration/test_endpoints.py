@@ -370,6 +370,24 @@ class _RaisingEngine:
         raise RuntimeError("extraction blew up")
 
 
+def test_full_config_from_beancount_directive(ledger):
+    """No config.yaml at all: everything comes from the ledger directive."""
+    from fava_ai import FavaAI
+
+    directive = (
+        "{'provider': 'local', 'base_url': 'http://localhost:8080/v1', "
+        "'api_key': 'k', 'model': 'm', "
+        "'agent': {'timeout_seconds': 42}, 'tools': {'external_enabled': False}}"
+    )
+    ext = FavaAI(ledger, directive)
+
+    provider = ext.provider_registry.get("local")
+    assert provider is not None
+    assert provider.base_url == "http://localhost:8080/v1"
+    assert ext._config_manager.get_agent_config()["timeout_seconds"] == 42
+    assert ext._config_manager.get_provider_config()["local"]["model"] == "m"
+
+
 def test_after_load_file_logs_instead_of_raising(client, ext, caplog):
     ext._knowledge_engine = _RaisingEngine()
     with caplog.at_level("ERROR"):
