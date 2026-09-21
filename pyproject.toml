@@ -46,6 +46,7 @@ package-dir = {"fava_ai" = "."}
 packages = [
     "fava_ai",
     "fava_ai.agent",
+    "fava_ai.util",
     "fava_ai.models",
     "fava_ai.tools",
     "fava_ai.tools.builtin",

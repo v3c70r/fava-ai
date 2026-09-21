@@ -3,12 +3,8 @@
 from collections import defaultdict
 
 from beancount.core import realization
-from beancount.core.inventory import Inventory
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
-
-
-def _inv_str(inv: Inventory) -> str:
-    return inv.to_string() if not inv.is_empty() else "0"
+from fava_ai.util.inventory import summarize_inventory
 
 
 class AccountExtractor:
@@ -36,8 +32,10 @@ class AccountExtractor:
             children = [child.account for child in real_acct.values() if child.account]
             accounts_data.append({
                 "name": name,
-                "balance": _inv_str(real_acct.balance),
-                "aggregate_balance": _inv_str(realization.compute_balance(real_acct)),
+                "balance": summarize_inventory(real_acct.balance),
+                "aggregate_balance": summarize_inventory(
+                    realization.compute_balance(real_acct)
+                ),
                 "depth": name.count(":"),
                 "parent": ":".join(name.split(":")[:-1]) if ":" in name else "",
                 "children": children,
