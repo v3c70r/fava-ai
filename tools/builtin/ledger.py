@@ -1,5 +1,4 @@
 import json
-from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
@@ -12,6 +11,7 @@ except ImportError:
 from beancount.core import realization
 from beancount.core.amount import Amount
 from beancount.core.inventory import Inventory
+from fava_ai.util.inventory import inventory_magnitude, summarize_inventory
 
 
 def _prepare_entries(ledger):
@@ -144,32 +144,11 @@ class RunBQLTool(BaseTool):
 
 
 def _inv_summary(inv: Inventory) -> str:
-    """Sum an inventory by currency, collapsing cost lots.
-
-    A full inventory can be kilobytes of per-lot detail (one entry per purchase);
-    for account listing we only need the per-currency totals.
-    """
-    if inv.is_empty():
-        return "0"
-    totals: dict[str, Decimal] = defaultdict(Decimal)
-    for position in inv:
-        units = getattr(position, "units", None)
-        if units is not None:
-            totals[units.currency] += units.number
-    totals = {c: n for c, n in totals.items() if n != 0}
-    if not totals:
-        return "0"
-    return "(" + ", ".join(f"{n} {c}" for c, n in sorted(totals.items())) + ")"
+    return summarize_inventory(inv)
 
 
 def _inv_abs_total(inv: Inventory):
-    """Rough magnitude across currencies, for sorting only."""
-    total = Decimal("0")
-    for position in inv:
-        units = getattr(position, "units", None)
-        if units is not None:
-            total += abs(units.number)
-    return total
+    return inventory_magnitude(inv)
 
 
 class ListAccountsTool(BaseTool):

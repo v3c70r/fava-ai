@@ -181,6 +181,9 @@ class WikiManager:
                 "title_tokens": {_stem(t) for t in _tokenize(str(title))},
                 "body_counts": body_counts,
                 "type": page.metadata.get("type", ""),
+                "type_tokens": {
+                    _stem(t) for t in _tokenize(str(page.metadata.get("type", "")))
+                },
             })
         self._search_cache = entries
         self._search_cache_key = key
@@ -202,6 +205,9 @@ class WikiManager:
             for term in terms:
                 if term in entry["title_tokens"]:
                     score += 10.0
+                elif term in entry["type_tokens"]:
+                    # Frontmatter type (e.g. `merchant`) names the page's kind.
+                    score += 5.0
                 count = entry["body_counts"].get(term, 0)
                 if count:
                     score += min(count, 3)  # cap term-frequency contribution

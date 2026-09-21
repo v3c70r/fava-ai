@@ -166,6 +166,29 @@ def test_search_matches_singular_plural(wiki):
     assert any(p.startswith("accounts/Expenses-Grocery") for p in paths)
 
 
+def test_search_matches_frontmatter_type(wiki):
+    """Frontmatter `type` must stay searchable (it names the page's kind)."""
+    for query in ("merchant", "merchants", "recurring", "patterns"):
+        paths = [r["path"] for r in wiki.search(query)]
+        assert paths, f"no results for {query!r}"
+
+
+def test_account_pages_are_compact(ledger):
+    """Aggregate balances must not inline per-lot detail (found in review)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        w = WikiManager(Path(d) / "wiki")
+        KnowledgeEngine(w).extract_all(ledger.all_entries, ledger.options)
+        sizes = [
+            p.stat().st_size
+            for p in (Path(d) / "wiki" / "accounts").glob("*.md")
+            if p.name != "_index.md"
+        ]
+        # Per-lot inventories made some pages >9KB on a real ledger.
+        assert max(sizes) < 3000, f"account page too large: {max(sizes)}"
+
+
 def test_search_does_not_match_substring_of_longer_word(tmp_path):
     wiki = WikiManager(tmp_path / "wiki")
     wiki.write(
