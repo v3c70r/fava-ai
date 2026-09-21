@@ -14,10 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there too, so secrets can stay out of the ledger. `.fava-ai/config.yaml` is now optional
   and only overrides the directive key-by-key.
 - **Providers unified into a single OpenAI-compatible implementation.** Every vendor
-  (OpenAI, DeepSeek, Ollama, Anthropic, llama.cpp, LM Studio, vLLM, OpenRouter) is
-  configured with `base_url` + `api_key` + `model`. Legacy names (`openai`, `deepseek`,
-  `anthropic`, `ollama`) are kept as aliases that supply a default base URL. Removed
-  `models/openai.py`, `models/anthropic.py`, `models/deepseek.py`, `models/ollama.py`.
+  (OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, Together, OpenRouter,
+  Cerebras, NVIDIA, Moonshot, Fireworks, Baseten, HuggingFace, Vercel AI Gateway, Meta,
+  Xiaomi) is configured with `base_url` + `api_key` + `model`. Well-known names supply a
+  default base URL. Removed `models/openai.py`, `models/anthropic.py`,
+  `models/deepseek.py`, `models/ollama.py`.
+- **`ollama` is no longer special-cased.** A local server is just an OpenAI-compatible
+  `base_url` (e.g. `http://localhost:11434/v1`); see the README example. The default
+  provider is now the configured `provider`, or the first one declared.
 - Model listing and the connection check now use the OpenAI-compatible `/models`
   endpoint (with a 1-token completion fallback), so the model picker works for every
   endpoint.

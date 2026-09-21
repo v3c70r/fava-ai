@@ -18,14 +18,14 @@ def test_config_manager_defaults(tmp_dir):
 def test_config_manager_beancount_config():
     from tests.conftest import MockLedger
     ledger = MockLedger([], {"operating_currency": ["USD"]})
-    bc = {"provider": "ollama", "model": "llama3", "max_iterations": 5}
+    bc = {"provider": "openai", "model": "gpt-4o", "max_iterations": 5}
     cm = ConfigManager(ledger, bc, Path("/tmp/fake"))
     agent = cm.get_agent_config()
     assert agent["max_iterations"] == 5
     assert agent["max_tool_calls"] == 20
     providers = cm.get_provider_config()
-    assert "ollama" in providers
-    assert providers["ollama"]["model"] == "llama3"
+    assert "openai" in providers
+    assert providers["openai"]["model"] == "gpt-4o"
 
 
 def test_config_manager_yaml_override(tmp_dir):
@@ -49,10 +49,10 @@ def test_config_manager_env_substitution(tmp_dir, monkeypatch):
 def test_config_manager_yaml_provider_merge():
     from tests.conftest import MockLedger
     ledger = MockLedger([], {"operating_currency": ["USD"]})
-    bc = {"provider": "ollama", "model": "llama3"}
+    bc = {"provider": "deepseek", "model": "deepseek-chat"}
     cm = ConfigManager(ledger, bc, Path("/tmp/fake"))
     providers = cm.get_provider_config()
-    assert providers["ollama"]["model"] == "llama3"
+    assert providers["deepseek"]["model"] == "deepseek-chat"
 
 
 def test_config_manager_knowledge_config(tmp_dir):
@@ -86,11 +86,16 @@ def test_resolve_provider_type_and_base_url():
     from fava_ai.config import provider_base_url, resolve_provider_type
 
     # Vendors are aliases for the single OpenAI-compatible implementation.
-    assert resolve_provider_type("ollama", {}) == ("openai_compat", None)
+    assert resolve_provider_type("groq", {}) == ("openai_compat", None)
     assert resolve_provider_type("openai", {}) == ("openai_compat", None)
     assert resolve_provider_type(
         "local", {"base_url": "http://x/v1"}
     ) == ("openai_compat", None)
+
+    # `ollama` is intentionally not special-cased: a local server is just a
+    # base_url (see the README example).
+    canonical, error = resolve_provider_type("ollama", {})
+    assert canonical is None and error
 
     # Unknown name without type/base_url is an error (likely a typo).
     canonical, error = resolve_provider_type("mystery", {})
@@ -99,7 +104,7 @@ def test_resolve_provider_type_and_base_url():
     _canonical, error = resolve_provider_type("x", {"type": "nope"})
     assert error
 
-    assert provider_base_url("ollama", {}) == "http://localhost:11434/v1"
+    assert provider_base_url("groq", {}) == "https://api.groq.com/openai/v1"
     assert provider_base_url("openai", {}) == "https://api.openai.com/v1"
     assert provider_base_url("local", {"base_url": "http://x/v1"}) == "http://x/v1"
     assert provider_base_url("local", {}) == ""

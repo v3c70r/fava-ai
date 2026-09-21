@@ -29,25 +29,57 @@ DEFAULT_CONFIG: dict[str, dict] = {
 #: endpoint, so a configured `base_url` + `api_key` + `model` is enough.
 CANONICAL_PROVIDER = "openai_compat"
 
-#: Accepted provider names. Legacy vendor names are aliases for the canonical
-#: implementation and get a sensible default base URL.
+#: Accepted provider names. All resolve to the single OpenAI-compatible
+#: implementation; the well-known vendors below also get a default base URL.
+#: Any other name works too, as long as it supplies a `base_url` (e.g. a local
+#: Ollama / llama.cpp / LM Studio / vLLM server).
 PROVIDER_ALIASES: dict[str, str] = {
     "openai_compat": CANONICAL_PROVIDER,
-    "ollama": CANONICAL_PROVIDER,
     "openai": CANONICAL_PROVIDER,
-    "deepseek": CANONICAL_PROVIDER,
     "anthropic": CANONICAL_PROVIDER,
+    "deepseek": CANONICAL_PROVIDER,
+    "google": CANONICAL_PROVIDER,
+    "groq": CANONICAL_PROVIDER,
+    "mistral": CANONICAL_PROVIDER,
+    "xai": CANONICAL_PROVIDER,
+    "together": CANONICAL_PROVIDER,
+    "openrouter": CANONICAL_PROVIDER,
+    "cerebras": CANONICAL_PROVIDER,
+    "nvidia": CANONICAL_PROVIDER,
+    "moonshotai": CANONICAL_PROVIDER,
+    "fireworks": CANONICAL_PROVIDER,
+    "baseten": CANONICAL_PROVIDER,
+    "huggingface": CANONICAL_PROVIDER,
+    "vercel-ai-gateway": CANONICAL_PROVIDER,
+    "meta": CANONICAL_PROVIDER,
+    "xiaomi": CANONICAL_PROVIDER,
 }
 
 #: Backwards-compatible name kept for validation/config tooling.
 KNOWN_PROVIDERS = set(PROVIDER_ALIASES)
 
 #: Default base URLs for well-known vendors (all OpenAI-compatible).
+#: Local servers (Ollama, llama.cpp, LM Studio, vLLM, …) are not listed —
+#: they are just `base_url`s, e.g. http://localhost:11434/v1.
 KNOWN_BASE_URLS: dict[str, str] = {
-    "ollama": "http://localhost:11434/v1",
     "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "groq": "https://api.groq.com/openai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "xai": "https://api.x.ai/v1",
+    "together": "https://api.together.ai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+    "moonshotai": "https://api.moonshot.ai/v1",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "baseten": "https://inference.baseten.co/v1",
+    "huggingface": "https://router.huggingface.co/v1",
+    "vercel-ai-gateway": "https://ai-gateway.vercel.sh/v1",
+    "meta": "https://api.meta.ai/v1",
+    "xiaomi": "https://api.xiaomimimo.com/v1",
 }
 
 _ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools"}
@@ -73,8 +105,9 @@ def resolve_provider_type(name: str, cfg: dict) -> tuple[str | None, str | None]
 
     Returns ``(canonical_type, error)``; ``canonical_type`` is None on error.
     A name that is a known vendor (or a known ``type``) resolves directly. An
-    arbitrary name is treated as an OpenAI-compatible endpoint when it supplies
-    a ``base_url``; otherwise it is an error (likely a typo).
+    arbitrary name (e.g. a local server) is treated as an OpenAI-compatible
+    endpoint when it supplies a ``base_url``; otherwise it is an error (likely
+    a typo).
     """
     ptype = cfg.get("type")
     if ptype is not None:
