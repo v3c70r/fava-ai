@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
@@ -27,14 +28,24 @@ def _fit_rows(rows, build, max_rows=MAX_TOOL_ROWS, max_chars=MAX_TOOL_CHARS):
     """Bound a list of row dicts so the serialized payload fits the budget.
 
     ``build`` serializes a candidate row list for the size check. Returns the
-    (possibly truncated) rows and whether truncation happened.
+    (possibly truncated) rows and whether truncation happened. When the payload
+    is too large it keeps the largest fitting prefix (binary search) rather than
+    halving, so as many leading rows as possible are preserved.
     """
     truncated = len(rows) > max_rows
     rows = rows[:max_rows]
-    while rows and len(build(rows)) > max_chars:
-        rows = rows[: max(1, len(rows) // 2)]
-        truncated = True
-    return rows, truncated
+    if not rows or len(build(rows)) <= max_chars:
+        return rows, truncated
+
+    lo, hi, best = 1, len(rows), 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if len(build(rows[:mid])) <= max_chars:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return rows[:best], True
 
 
 def _json_safe(val):
@@ -132,6 +143,35 @@ class RunBQLTool(BaseTool):
             )
 
 
+def _inv_summary(inv: Inventory) -> str:
+    """Sum an inventory by currency, collapsing cost lots.
+
+    A full inventory can be kilobytes of per-lot detail (one entry per purchase);
+    for account listing we only need the per-currency totals.
+    """
+    if inv.is_empty():
+        return "0"
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    for position in inv:
+        units = getattr(position, "units", None)
+        if units is not None:
+            totals[units.currency] += units.number
+    totals = {c: n for c, n in totals.items() if n != 0}
+    if not totals:
+        return "0"
+    return "(" + ", ".join(f"{n} {c}" for c, n in sorted(totals.items())) + ")"
+
+
+def _inv_abs_total(inv: Inventory):
+    """Rough magnitude across currencies, for sorting only."""
+    total = Decimal("0")
+    for position in inv:
+        units = getattr(position, "units", None)
+        if units is not None:
+            total += abs(units.number)
+    return total
+
+
 class ListAccountsTool(BaseTool):
     def __init__(self, ledger):
         self._ledger = ledger
@@ -142,7 +182,14 @@ class ListAccountsTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "List all accounts in the ledger, optionally filtered by a prefix. Returns account names and their current balances."
+        return (
+            "List accounts with two balances: `balance` (the account's own postings "
+            "only) and `aggregate_balance` (including all sub-accounts). Use "
+            "`aggregate_balance` for totals such as net worth — parent accounts "
+            "correctly show their subtree total. Filter with `prefix` (e.g. 'Assets') "
+            "or `contains` (any substring). Results are sorted by absolute aggregate "
+            "balance and capped by `limit`."
+        )
 
     @property
     def parameters(self) -> dict:
@@ -153,28 +200,74 @@ class ListAccountsTool(BaseTool):
                     "type": "string",
                     "description": "Optional account name prefix to filter by (e.g. 'Expenses', 'Assets')",
                 },
+                "contains": {
+                    "type": "string",
+                    "description": "Optional case-insensitive substring to match anywhere in the account name",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of accounts to return (default 100)",
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["aggregate", "name"],
+                    "description": "Sort by absolute aggregate balance (default) or by name",
+                },
             },
         }
 
-    def execute(self, prefix: str = "") -> ToolResult:
+    def execute(self, prefix: str = "", contains: str = "", limit: int = 100,
+                sort: str = "aggregate") -> ToolResult:
         entries = self._ledger.all_entries
         root = realization.realize(entries)
+        contains_lower = contains.lower()
 
-        accounts = []
+        rows = []
         for real_account in realization.iter_children(root):
             acct_name = real_account.account
             if not acct_name:
                 continue
             if prefix and not acct_name.startswith(prefix):
                 continue
-            balance = real_account.balance
-            accounts.append({
+            if contains_lower and contains_lower not in acct_name.lower():
+                continue
+            aggregate = realization.compute_balance(real_account)
+            rows.append({
                 "account": acct_name,
-                "balance": balance.to_string() if not balance.is_empty() else "0",
+                "balance": _inv_summary(real_account.balance),
+                "aggregate_balance": _inv_summary(aggregate),
+                "depth": acct_name.count(":"),
+                "_magnitude": _inv_abs_total(aggregate),
             })
 
-        result_text = json.dumps({"accounts": accounts, "count": len(accounts)}, indent=2, ensure_ascii=False)
-        return ToolResult(content=result_text, metadata={"count": len(accounts)})
+        if sort == "name":
+            rows.sort(key=lambda r: r["account"])
+        else:
+            rows.sort(key=lambda r: (-r["_magnitude"], r["account"]))
+
+        total_matching = len(rows)
+        try:
+            limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            limit = 100
+        truncated = total_matching > limit
+        rows = rows[:limit]
+        for row in rows:
+            row.pop("_magnitude", None)
+
+        fitted, size_truncated = _fit_rows(
+            rows, lambda r: json.dumps({"accounts": r}, indent=2, ensure_ascii=False)
+        )
+        payload = {
+            "accounts": fitted,
+            "count": len(fitted),
+            "total_matching": total_matching,
+            "truncated": truncated or size_truncated,
+        }
+        return ToolResult(
+            content=json.dumps(payload, indent=2, ensure_ascii=False),
+            metadata={"count": len(fitted), "total_matching": total_matching},
+        )
 
 
 class AccountDetailsTool(BaseTool):
@@ -230,7 +323,7 @@ class AccountDetailsTool(BaseTool):
 
         rows, truncated = _fit_rows(
             postings_list,
-            lambda r: json.dumps({"recent_postings": r}, ensure_ascii=False),
+            lambda r: json.dumps({"recent_postings": r}, indent=2, ensure_ascii=False),
         )
         result = {
             "account": account,
@@ -307,7 +400,7 @@ class SearchTransactionsTool(BaseTool):
 
         rows, truncated = _fit_rows(
             results,
-            lambda r: json.dumps({"results": r}, ensure_ascii=False),
+            lambda r: json.dumps({"results": r}, indent=2, ensure_ascii=False),
         )
         payload = {
             "results": rows,

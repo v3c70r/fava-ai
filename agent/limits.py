@@ -15,3 +15,5 @@ class ExecutionLimits:
     retries: int = 2
     #: Optional cap on generated tokens per provider call (None = provider default).
     max_tokens: int | None = None
+    #: Grace budget for the final tool-less "wrap up" call after a limit is hit.
+    wrap_up_seconds: int = 60

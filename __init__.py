@@ -174,6 +174,41 @@ class FavaAI(FavaExtensionBase):
             logger.debug("Could not update title for %s", conv_id)
         return assistant_msg_id
 
+    def _persist_aborted(self, exc):
+        """Persist whatever the runtime produced before a hard error.
+
+        Prevents an interrupted run from leaving no trace in the history.
+        """
+        if not self._db:
+            return None
+        partial = getattr(exc, "partial_messages", None)
+        conv_id = getattr(exc, "conversation_id", None)
+        if not partial or not conv_id:
+            return None
+
+        from fava_ai.models.base import Message
+        from fava_ai.storage.conversations import create_conversation, save_message
+
+        first_user = next(
+            (m.content for m in partial if m.role == "user" and m.content), ""
+        )
+        try:
+            create_conversation(
+                self._db, id=conv_id, title=(first_user or "Conversation")[:80],
+                provider="", model="",
+            )
+        except Exception:
+            logger.debug("Conversation %s already exists", conv_id)
+
+        for msg in partial:
+            if msg.role == "system":
+                continue
+            save_message(self._db, conv_id, msg)
+        save_message(self._db, conv_id, Message(
+            role="assistant", content=f"(Interrupted before completion: {exc})",
+        ))
+        return conv_id
+
     @extension_endpoint("chat", methods=["POST"])
     def api_chat(self):
         try:
@@ -215,11 +250,15 @@ class FavaAI(FavaExtensionBase):
                 "provenance": result.get("provenance", {}),
                 "provenance_summary": result.get("provenance_summary", ""),
                 "tool_call_count": result.get("tool_call_count", 0),
+                "partial": result.get("partial", False),
+                "stop_reason": result.get("stop_reason"),
             })
 
         except AgentError as e:
+            self._persist_aborted(e)
             return jsonify({
                 "error": str(e), "error_type": type(e).__name__,
+                "conversation_id": getattr(e, "conversation_id", None),
             }), e.http_status
         except Exception as e:
             logger.exception("chat endpoint failed")
@@ -260,12 +299,15 @@ class FavaAI(FavaExtensionBase):
                             "message_id": message_id,
                             "content": result["content"],
                             "provenance_summary": result["provenance_summary"],
+                            "partial": result.get("partial", False),
+                            "stop_reason": result.get("stop_reason"),
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
                     else:
                         yield f"data: {json.dumps(event)}\n\n"
 
             except AgentError as e:
+                self._persist_aborted(e)
                 yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'error_type': type(e).__name__})}\n\n"
             except Exception as e:
                 logger.exception("chat_stream endpoint failed")

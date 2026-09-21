@@ -2,6 +2,7 @@
 
 import re
 import shutil
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,41 @@ import yaml
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _META_FILES = {"index.md", "AGENTS.md", "log.md"}
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+#: Query terms too common to be meaningful for scoring.
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are",
+    "was", "were", "be", "my", "me", "i", "we", "you", "it", "its", "this",
+    "that", "what", "which", "how", "much", "many", "do", "does", "did", "get",
+    "show", "list", "all", "with", "by", "at", "as", "from", "total", "please",
+}
+
+
+def _stem(word: str) -> str:
+    """Very small suffix folder so `groceries` matches `grocery`.
+
+    The same function is applied to indexed tokens and query tokens, so exact
+    linguistic correctness matters less than consistency.
+    """
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
+
+
+def _rel_posix(path: Path, base: Path) -> str:
+    """Relative path with forward slashes on every OS (for links and tool I/O)."""
+    return path.relative_to(base).as_posix()
+
+
+def _is_meta(md_file: Path) -> bool:
+    return md_file.name in _META_FILES or md_file.name.startswith("_")
 
 
 class WikiPage:
@@ -22,7 +58,10 @@ class WikiPage:
     def from_file(cls, path: Path) -> "WikiPage":
         if not path.exists():
             return cls(path, {}, "")
-        text = path.read_text(encoding="utf-8")
+        return cls.from_text(path, path.read_text(encoding="utf-8"))
+
+    @classmethod
+    def from_text(cls, path: Path, text: str) -> "WikiPage":
         meta: dict = {}
         body = text
         m = FRONTMATTER_RE.match(text)
@@ -107,14 +146,13 @@ class WikiManager:
     # ── Search ────────────────────────────────────────────────────
 
     def _search_index(self) -> list[dict]:
-        """Parsed, lowercased copy of every content page, cached by file stat.
+        """Parsed, tokenized copy of every content page, cached by file stat.
 
         Rebuilding only happens when a file's mtime/size changes, so repeated
         searches during a chat turn are cheap.
         """
         files = sorted(
-            f for f in self.wiki_dir.rglob("*.md")
-            if f.name not in _META_FILES and not f.name.startswith("_")
+            f for f in self.wiki_dir.rglob("*.md") if not _is_meta(f)
         )
         try:
             key = tuple(
@@ -131,13 +169,17 @@ class WikiManager:
                 text = md_file.read_text(encoding="utf-8")
             except OSError:
                 continue
-            page = WikiPage.from_file(md_file)
+            page = WikiPage.from_text(md_file, text)
+            title = page.metadata.get("title", md_file.stem)
+            body_counts = Counter(_stem(t) for t in _tokenize(page.content))
             entries.append({
-                "path": str(md_file.relative_to(self.wiki_dir)),
+                "path": _rel_posix(md_file, self.wiki_dir),
                 "stem": md_file.stem,
-                "text": text,
-                "lower": text.lower(),
-                "title": page.metadata.get("title", md_file.stem),
+                "text": page.content,
+                "lower": page.content.lower(),
+                "title": title,
+                "title_tokens": {_stem(t) for t in _tokenize(str(title))},
+                "body_counts": body_counts,
                 "type": page.metadata.get("type", ""),
             })
         self._search_cache = entries
@@ -145,23 +187,44 @@ class WikiManager:
         return entries
 
     def search(self, query: str, max_results: int = 20) -> list[dict]:
+        """Word-boundary + light-stemming search, ranked by relevance.
+
+        Falls back to plain substring matching only when no page matches any
+        query token (so exact substrings still work for odd queries).
+        """
         query_lower = query.lower()
-        query_words = set(query_lower.split())
-        results = []
+        raw_words = _tokenize(query) or [query_lower]
+        terms = [t for t in (_stem(w) for w in raw_words) if t and t not in _STOPWORDS]
+
+        scored: list[tuple[float, dict]] = []
         for entry in self._search_index():
-            text_lower = entry["lower"]
-            match = query_lower in text_lower
-            if not match:
-                match = any(len(w) > 2 and w in text_lower for w in query_words)
-            if match:
-                results.append({
-                    "path": entry["path"],
-                    "title": entry["title"],
-                    "type": entry["type"],
-                    "snippet": self._snippet(entry["text"], query_words, 120),
-                })
-            if len(results) >= max_results:
-                break
+            score = 0.0
+            for term in terms:
+                if term in entry["title_tokens"]:
+                    score += 10.0
+                count = entry["body_counts"].get(term, 0)
+                if count:
+                    score += min(count, 3)  # cap term-frequency contribution
+            if query_lower and query_lower in entry["lower"]:
+                score += 2.0  # small exact-phrase bonus
+            if score > 0:
+                scored.append((score, entry))
+
+        if not scored:
+            # Substring fallback (previous behaviour) when nothing tokenized.
+            for entry in self._search_index():
+                if len(query_lower) > 2 and query_lower in entry["lower"]:
+                    scored.append((1.0, entry))
+
+        scored.sort(key=lambda item: (-item[0], item[1]["path"]))
+        results = []
+        for _score, entry in scored[:max_results]:
+            results.append({
+                "path": entry["path"],
+                "title": entry["title"],
+                "type": entry["type"],
+                "snippet": self._snippet(entry["text"], set(raw_words), 120),
+            })
         return results
 
     def _snippet(self, text: str, query_words: set, context: int = 120) -> str:
@@ -186,12 +249,11 @@ class WikiManager:
             return []
         results = []
         for md_file in sorted(base.rglob("*.md")):
-            if md_file.name in _META_FILES:
+            if _is_meta(md_file):
                 continue
-            rel = str(md_file.relative_to(self.wiki_dir))
             page = WikiPage.from_file(md_file)
             results.append({
-                "path": rel,
+                "path": _rel_posix(md_file, self.wiki_dir),
                 "title": page.metadata.get("title", md_file.stem),
                 "type": page.metadata.get("type", ""),
                 "size": md_file.stat().st_size,
@@ -206,12 +268,11 @@ class WikiManager:
             return
         pages = []
         for md_file in sorted(self.wiki_dir.rglob("*.md")):
-            if md_file.name in _META_FILES:
+            if _is_meta(md_file):
                 continue
-            rel = str(md_file.relative_to(self.wiki_dir))
             page = WikiPage.from_file(md_file)
             pages.append({
-                "path": rel,
+                "path": _rel_posix(md_file, self.wiki_dir),
                 "title": page.metadata.get("title", md_file.stem),
                 "type": page.metadata.get("type", ""),
             })
@@ -240,6 +301,34 @@ class WikiManager:
 
         index = self.wiki_dir / "index.md"
         index.write_text("\n".join(lines), encoding="utf-8")
+
+    # ── Section indexes ───────────────────────────────────────────
+
+    def write_section_index(self, section: str, title: str) -> int:
+        """Write `<section>/_index.md` listing that section's pages.
+
+        Used by the overview page links; hidden from search and the main index.
+        """
+        pages = self.list_pages(section)
+        lines = [
+            "---",
+            f"title: {title}",
+            "type: index",
+            f"updated: {datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "---",
+            "",
+            f"# {title}",
+            "",
+            f"{len(pages)} page(s).",
+            "",
+        ]
+        for p in sorted(pages, key=lambda x: x["path"]):
+            lines.append(f"- [[{p['path']}|{p['title']}]]")
+
+        target = self.wiki_dir / section / "_index.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return len(pages)
 
     # ── Log ───────────────────────────────────────────────────────
 

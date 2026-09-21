@@ -185,7 +185,7 @@ On first load, the extension extracts a structured knowledge base from your ledg
 ├── overview.md          # Ledger summary
 ├── index.md             # Page catalog by type
 ├── accounts/            # One page per account with balance + hierarchy
-├── merchants/           # Payee catalog with transaction history
+├── merchants/           # Merchant catalog (payee, else derived from narration)
 ├── recurring/           # Detected recurring payments
 ├── portfolio/           # Investment holdings
 ├── patterns/            # Spending trends and cashflow

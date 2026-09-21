@@ -279,7 +279,7 @@ def test_run_stream_tool_call_loop():
     assert tool_steps[0]["step"]["tool_name"] == "echo"
 
 
-def test_run_stream_max_iterations_raises():
+def test_run_stream_max_iterations_returns_partial():
     provider = StreamProvider([[
         StreamChunk(tool_calls=[
             LLMToolCall(id="1", function=FunctionCall(name="echo", arguments="{}"))
@@ -291,8 +291,14 @@ def test_run_stream_max_iterations_raises():
         config={"max_iterations": 2, "max_tool_calls": 10},
     )
 
-    with pytest.raises(LimitExceeded):
-        list(agent.run_stream("hi", provider_name="stream"))
+    events = list(agent.run_stream("hi", provider_name="stream"))
+
+    assert events[-1]["type"] == "done"
+    result = events[-1]["result"]
+    assert result["partial"] is True
+    assert "max_iterations" in result["stop_reason"]
+    # A partial answer is streamed before the done event.
+    assert any(e["type"] == "content_delta" for e in events)
 
 
 def test_run_stream_empty_raises():

@@ -1,0 +1,114 @@
+;; Reproduction fixture for real-data issues (narration-only, two operating
+;; currencies, hierarchical accounts, a fully-sold position, price data).
+option "title" "Narration-only multi-currency ledger"
+option "operating_currency" "CAD"
+option "operating_currency" "USD"
+
+2010-01-01 commodity CAD
+2010-01-01 commodity USD
+2010-01-01 commodity VTI
+2010-01-01 commodity BOND
+
+2010-01-01 open Assets:Bank:Checking
+2010-01-01 open Assets:Bank:Savings
+2010-01-01 open Assets:Broker:VTI
+2010-01-01 open Assets:Broker:BOND
+2010-01-01 open Assets:Cash:USD
+2010-01-01 open Equity:Opening-Balances
+2010-01-01 open Income:CA:Salary
+2010-01-01 open Income:US:Salary
+2010-01-01 open Expenses:Grocery
+2010-01-01 open Expenses:Food:Coffee
+2010-01-01 open Expenses:Rent
+2010-01-01 open Expenses:Travel
+
+2010-01-02 * "Opening" "Opening balances"
+  Assets:Bank:Checking      10000.00 CAD
+  Equity:Opening-Balances
+
+2010-01-02 * "Opening" "Opening USD balances"
+  Assets:Cash:USD            5000.00 USD
+  Equity:Opening-Balances
+
+;; Narration-only, repeatedly: recurring merchant with card noise.
+2010-01-05 * "" "COFFEE SHOP - CARD 1234"
+  Expenses:Food:Coffee         12.50 CAD
+  Assets:Bank:Checking
+
+2010-02-05 * "" "COFFEE SHOP - CARD 1234"
+  Expenses:Food:Coffee         12.50 CAD
+  Assets:Bank:Checking
+
+2010-03-05 * "" "COFFEE SHOP - CARD 1234"
+  Expenses:Food:Coffee         12.50 CAD
+  Assets:Bank:Checking
+
+2010-04-05 * "" "COFFEE SHOP - CARD 1234"
+  Expenses:Food:Coffee         12.50 CAD
+  Assets:Bank:Checking
+
+;; Narration-only groceries.
+2010-01-10 * "" "GROCERY STORE 9911"
+  Expenses:Grocery            300.00 CAD
+  Assets:Bank:Checking
+
+2010-02-10 * "" "GROCERY STORE 9911"
+  Expenses:Grocery            320.00 CAD
+  Assets:Bank:Checking
+
+2010-03-10 * "" "GROCERY STORE 9911"
+  Expenses:Grocery            280.00 CAD
+  Assets:Bank:Checking
+
+;; Narration-only rent.
+2010-01-01 * "" "RENT PAYMENT"
+  Expenses:Rent              1500.00 CAD
+  Assets:Bank:Checking
+
+2010-02-01 * "" "RENT PAYMENT"
+  Expenses:Rent              1500.00 CAD
+  Assets:Bank:Checking
+
+2010-03-01 * "" "RENT PAYMENT"
+  Expenses:Rent              1500.00 CAD
+  Assets:Bank:Checking
+
+2010-04-01 * "" "RENT PAYMENT"
+  Expenses:Rent              1500.00 CAD
+  Assets:Bank:Checking
+
+;; USD income/expenses (must not be silently dropped by spending/cashflow).
+2010-01-15 * "US Employer" "Salary"
+  Assets:Cash:USD            4000.00 USD
+  Income:US:Salary
+
+2010-02-15 * "US Employer" "Salary"
+  Assets:Cash:USD            4000.00 USD
+  Income:US:Salary
+
+2010-03-15 * "US Employer" "Salary"
+  Assets:Cash:USD            4000.00 USD
+  Income:US:Salary
+
+2010-02-20 * "US Store" "Travel"
+  Expenses:Travel             500.00 USD
+  Assets:Cash:USD
+
+2010-03-20 * "US Store" "Travel"
+  Expenses:Travel             700.00 USD
+  Assets:Cash:USD
+
+;; Investments: one still held, one fully sold (net zero units).
+2010-01-20 * "Broker" "Buy VTI"
+  Assets:Broker:VTI              10 VTI {100.00 CAD}
+  Assets:Bank:Checking
+
+2010-01-21 * "Broker" "Buy BOND"
+  Assets:Broker:BOND              5 BOND {50.00 CAD}
+  Assets:Bank:Checking
+
+2010-02-21 * "Broker" "Sell BOND"
+  Assets:Broker:BOND             -5 BOND {50.00 CAD}
+  Assets:Bank:Checking
+
+2010-04-01 price VTI 120.00 CAD

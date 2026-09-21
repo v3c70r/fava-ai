@@ -114,6 +114,8 @@ def run_question(runtime, tools, question):
         "tool_calls": [],
         "tool_errors": [],
         "iterations": None,
+        "partial": False,
+        "stop_reason": None,
     }
     t0 = time.time()
     try:
@@ -122,6 +124,8 @@ def run_question(runtime, tools, question):
         result["answer"] = res["content"]
         steps = res["provenance"]["steps"]
         result["iterations"] = sum(1 for s in steps if s["step_type"] == "plan")
+        result["partial"] = res.get("partial", False)
+        result["stop_reason"] = res.get("stop_reason")
         for step in steps:
             if step["step_type"] == "tool_call":
                 result["tool_calls"].append({
@@ -212,6 +216,7 @@ def main():
             print(f"   ERROR ({r['error_type']}) after {r['wall_seconds']}s: {r['error']}")
         else:
             print(f"   {r['wall_seconds']}s | iterations={r['iterations']} | "
+                  f"partial={r['partial']} stop={r['stop_reason']} | "
                   f"tools={[t['tool'] for t in r['tool_calls']]}")
             print(f"   A: {r['answer']}")
         for te in r["tool_errors"]:
