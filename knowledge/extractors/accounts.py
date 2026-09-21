@@ -1,7 +1,14 @@
 """Account graph extractor — generates wiki/accounts/*.md."""
 
+from collections import defaultdict
+
 from beancount.core import realization
+from beancount.core.inventory import Inventory
 from fava_ai.knowledge.wiki import WikiManager, WikiPage
+
+
+def _inv_str(inv: Inventory) -> str:
+    return inv.to_string() if not inv.is_empty() else "0"
 
 
 class AccountExtractor:
@@ -13,54 +20,41 @@ class AccountExtractor:
         stats = {"accounts_generated": 0}
 
         self.wiki.delete_dir("accounts")
-
         accounts_dir = self.wiki.wiki_dir / "accounts"
         accounts_dir.mkdir(parents=True, exist_ok=True)
 
+        counts = self._transaction_counts(entries)
+
         accounts_data = []
         for real_acct in realization.iter_children(root):
-            acct_name = real_acct.account
-            if acct_name in ("", "root"):
+            name = real_acct.account
+            if name in ("", "root"):
                 continue
-
-            balance = real_acct.balance
-            balance_str = balance.to_string() if not balance.is_empty() else "0"
-
-            children = []
-            for child in realization.iter_children(real_acct):
-                children.append(child.account)
-
-            txns_count = 0
-            for e in entries:
-                if hasattr(e, "postings"):
-                    for p in e.postings:
-                        if p.account == acct_name or p.account.startswith(acct_name + ":"):
-                            txns_count += 1
-                            break
-
-            depth = acct_name.count(":")
-            parent = ":".join(acct_name.split(":")[:-1]) if ":" in acct_name else ""
-
+            # Direct children only — `iter_children` is a pre-order traversal
+            # that yields the node itself first (which made every page list
+            # itself as its own sub-account).
+            children = [child.account for child in real_acct.values() if child.account]
             accounts_data.append({
-                "name": acct_name,
-                "balance": balance_str,
-                "depth": depth,
-                "parent": parent,
+                "name": name,
+                "balance": _inv_str(real_acct.balance),
+                "aggregate_balance": _inv_str(realization.compute_balance(real_acct)),
+                "depth": name.count(":"),
+                "parent": ":".join(name.split(":")[:-1]) if ":" in name else "",
                 "children": children,
-                "transaction_count": txns_count,
+                "transaction_count": counts.get(name, 0),
             })
 
         for data in accounts_data:
             safe_name = data["name"].replace(":", "-")
-            content = self._render_account(data, accounts_data)
+            content = self._render_account(data)
 
-            page_path = accounts_dir / f"{safe_name}.md"
             page = WikiPage(
-                path=page_path,
+                path=accounts_dir / f"{safe_name}.md",
                 metadata={
                     "title": data["name"],
                     "type": "account",
                     "balance": data["balance"],
+                    "aggregate_balance": data["aggregate_balance"],
                     "depth": data["depth"],
                     "transaction_count": data["transaction_count"],
                 },
@@ -72,12 +66,29 @@ class AccountExtractor:
         self.wiki._update_index()
         return stats
 
-    def _render_account(self, data: dict, all_data: list) -> str:
+    @staticmethod
+    def _transaction_counts(entries) -> dict:
+        """Transactions touching each account's subtree, counted once each."""
+        counts: dict[str, int] = defaultdict(int)
+        for entry in entries:
+            if not hasattr(entry, "postings"):
+                continue
+            accounts: set[str] = set()
+            for posting in entry.postings:
+                parts = posting.account.split(":")
+                for i in range(1, len(parts) + 1):
+                    accounts.add(":".join(parts[:i]))
+            for account in accounts:
+                counts[account] += 1
+        return counts
+
+    def _render_account(self, data: dict) -> str:
         lines = [
             f"# {data['name']}",
             "",
             "## Summary",
-            f"- **Balance:** {data['balance']}",
+            f"- **Balance (own):** {data['balance']}",
+            f"- **Balance (including sub-accounts):** {data['aggregate_balance']}",
             f"- **Depth:** {data['depth']}",
             f"- **Transaction count:** {data['transaction_count']}",
         ]

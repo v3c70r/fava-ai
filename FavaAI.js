@@ -146,6 +146,7 @@ export default {
         for (const conv of this.convList) {
             const div = document.createElement('div');
             div.className = 'fava-ai-conv-item' + (conv.id === this.activeConvId ? ' active' : '');
+            div.dataset.id = conv.id;
 
             const title = document.createElement('span');
             title.className = 'conv-title';
@@ -154,21 +155,95 @@ export default {
             title.addEventListener('click', () => this.loadConversation(conv.id));
             title.addEventListener('dblclick', (e) => {
                 e.stopPropagation();
-                this.renameConversation(conv.id, conv.title || '');
+                this.beginRename(div, conv);
             });
 
             const del = document.createElement('span');
             del.className = 'conv-delete';
             del.textContent = '\u00d7';
+            del.title = 'Delete';
             del.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.deleteConversation(conv.id);
+                this.requestDelete(div, conv);
             });
 
             div.appendChild(title);
             div.appendChild(del);
             this.el.convList.appendChild(div);
         }
+    },
+
+    // Inline rename — native prompt() blocks the page (and hangs automation).
+    beginRename(div, conv) {
+        if (div.querySelector('.conv-rename')) return;
+        const titleEl = div.querySelector('.conv-title');
+        if (!titleEl) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'conv-rename';
+        input.value = conv.title || '';
+        titleEl.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let settled = false;
+        const commit = async () => {
+            if (settled) return;
+            settled = true;
+            const value = input.value.trim();
+            if (value && value !== conv.title) {
+                try {
+                    await this.api('PUT', 'conversations', { id: conv.id, title: value });
+                } catch (e) {
+                    console.error('Failed to rename:', e);
+                }
+            }
+            await this.loadConversations();
+        };
+        const cancel = () => {
+            if (settled) return;
+            settled = true;
+            this.renderConvList();
+        };
+
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        });
+        input.addEventListener('blur', commit);
+    },
+
+    // Two-step inline delete confirmation — native confirm() blocks the page.
+    requestDelete(div, conv) {
+        if (div.dataset.confirm === '1') {
+            delete div.dataset.confirm;
+            this.deleteConversation(conv.id);
+            return;
+        }
+        this._resetDeleteConfirms();
+        div.dataset.confirm = '1';
+        div.classList.add('confirming');
+        const del = div.querySelector('.conv-delete');
+        if (del) del.textContent = 'Delete?';
+        setTimeout(() => {
+            if (div.dataset.confirm === '1') {
+                delete div.dataset.confirm;
+                div.classList.remove('confirming');
+                const d = div.querySelector('.conv-delete');
+                if (d) d.textContent = '\u00d7';
+            }
+        }, 4000);
+    },
+
+    _resetDeleteConfirms() {
+        this.el.convList.querySelectorAll('.fava-ai-conv-item.confirming').forEach(el => {
+            delete el.dataset.confirm;
+            el.classList.remove('confirming');
+            const d = el.querySelector('.conv-delete');
+            if (d) d.textContent = '\u00d7';
+        });
     },
 
     async loadConversation(id) {
@@ -183,10 +258,11 @@ export default {
     },
 
     async renameConversation(id, currentTitle) {
-        const title = prompt('Rename conversation:', currentTitle);
-        if (title === null || !title.trim()) return;
+        // Kept for programmatic use; the UI uses inline editing (beginRename).
+        const title = currentTitle;
+        if (title === null || title === undefined) return;
         try {
-            await this.api('PUT', 'conversations', { id, title: title.trim() });
+            await this.api('PUT', 'conversations', { id, title });
             await this.loadConversations();
         } catch (e) {
             console.error('Failed to rename:', e);
@@ -194,7 +270,6 @@ export default {
     },
 
     async deleteConversation(id) {
-        if (!confirm('Delete this conversation?')) return;
         try {
             await this.api('DELETE', 'conversations', null, { id });
             if (this.activeConvId === id) {
@@ -288,6 +363,8 @@ export default {
             } else {
                 this.renderAssistantError(assistantEl, e.message);
             }
+            // An interrupted run may still have been persisted server-side.
+            await this.loadConversations();
         } finally {
             assistantEl.classList.remove('streaming');
             this.currentAssistantEl = null;
@@ -340,6 +417,9 @@ export default {
             if (event.message_id) this.currentAssistantEl.dataset.messageId = event.message_id;
             this.activeConvId = event.conversation_id;
             this.appendNote(this.currentAssistantEl, event.provenance_summary || '');
+            if (event.partial) {
+                this.appendPartial(this.currentAssistantEl, event.stop_reason);
+            }
         } else if (event.type === 'error') {
             this.renderAssistantError(this.currentAssistantEl, event.error);
         }
@@ -413,6 +493,14 @@ export default {
         const note = document.createElement('div');
         note.className = 'assistant-note';
         note.innerHTML = this.md(text);
+        el.appendChild(note);
+        this.scrollToBottom();
+    },
+
+    appendPartial(el, stopReason) {
+        const note = document.createElement('div');
+        note.className = 'partial-note';
+        note.textContent = `\u26a0\ufe0f Partial answer \u2014 stopped: ${stopReason || 'execution limit reached'}`;
         el.appendChild(note);
         this.scrollToBottom();
     },
@@ -599,9 +687,82 @@ export default {
     async loadConfig() {
         try {
             const config = await this.api('GET', 'config');
-            this.el.panelConfig.innerHTML = `<pre style="font-size:11px;">${this.esc(JSON.stringify(config, null, 2))}</pre>`;
+            this._configDoc = config || {};
+            const providers = config.providers || {};
+            const names = Object.keys(providers);
+            const agent = config.agent || {};
+            const selected = names.includes(this.currentProvider)
+                ? this.currentProvider : (names[0] || '');
+
+            let html = '<h4>Configuration</h4>';
+            html += '<div class="config-form">';
+            html += '<label>Default provider</label>';
+            html += '<select id="cfg-provider">' + names.map(n =>
+                `<option value="${this.esc(n)}"${n === selected ? ' selected' : ''}>${this.esc(n)}</option>`
+            ).join('') + '</select>';
+            html += '<div id="cfg-provider-fields"></div>';
+            html += '<label>max_iterations</label>';
+            html += `<input id="cfg-max-iterations" type="number" min="1" value="${this.esc(agent.max_iterations ?? '')}">`;
+            html += '<label>max_tool_calls</label>';
+            html += `<input id="cfg-max-tool-calls" type="number" min="1" value="${this.esc(agent.max_tool_calls ?? '')}">`;
+            html += '<label>timeout_seconds</label>';
+            html += `<input id="cfg-timeout" type="number" min="1" value="${this.esc(agent.timeout_seconds ?? '')}">`;
+            html += '<button id="cfg-save" class="btn btn-sm">Save</button>';
+            html += '<div id="cfg-status" class="config-status"></div>';
+            html += '</div>';
+            html += '<p class="config-hint">Secrets are shown masked as <code>***</code>; leaving them unchanged keeps the stored value. Prefer editing the beancount directive for anything that belongs in version control.</p>';
+
+            this.el.panelConfig.innerHTML = html;
+
+            const renderProviderFields = () => {
+                const name = document.getElementById('cfg-provider').value;
+                const p = providers[name] || {};
+                document.getElementById('cfg-provider-fields').innerHTML =
+                    '<label>base_url</label>' +
+                    `<input id="cfg-base-url" type="text" value="${this.esc(p.base_url || '')}" placeholder="https://.../v1">` +
+                    '<label>model</label>' +
+                    `<input id="cfg-model" type="text" value="${this.esc(p.model || '')}">` +
+                    '<label>api_key</label>' +
+                    `<input id="cfg-api-key" type="text" value="${this.esc(p.api_key || '')}" placeholder="***">`;
+            };
+            document.getElementById('cfg-provider').addEventListener('change', renderProviderFields);
+            renderProviderFields();
+            document.getElementById('cfg-save').addEventListener('click', () => this.saveConfig());
         } catch (e) {
             this.el.panelConfig.innerHTML = '<p style="color:red;">Failed to load config</p>';
+        }
+    },
+
+    async saveConfig() {
+        const status = document.getElementById('cfg-status');
+        const name = document.getElementById('cfg-provider').value;
+        const doc = JSON.parse(JSON.stringify(this._configDoc || {}));
+        delete doc.config_dir;  // not part of the writable schema
+        doc.providers = doc.providers || {};
+        doc.providers[name] = doc.providers[name] || {};
+        doc.providers[name].base_url = document.getElementById('cfg-base-url').value.trim();
+        doc.providers[name].model = document.getElementById('cfg-model').value.trim();
+        const apiKey = document.getElementById('cfg-api-key').value;
+        if (apiKey) doc.providers[name].api_key = apiKey;
+
+        doc.agent = doc.agent || {};
+        for (const [id, field] of [
+            ['cfg-max-iterations', 'max_iterations'],
+            ['cfg-max-tool-calls', 'max_tool_calls'],
+            ['cfg-timeout', 'timeout_seconds'],
+        ]) {
+            const value = parseInt(document.getElementById(id).value, 10);
+            if (!Number.isNaN(value)) doc.agent[field] = value;
+        }
+
+        try {
+            await this.api('PUT', 'config', doc);
+            status.textContent = 'Saved.';
+            status.className = 'config-status ok';
+            await this.loadProviders();
+        } catch (e) {
+            status.textContent = 'Error: ' + (e.message || e);
+            status.className = 'config-status err';
         }
     },
 

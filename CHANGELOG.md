@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint.
 
 ### Added
+- Editable Config panel (provider `base_url`/`model`/`api_key` and agent limits)
+  wired to `PUT /config`, with secrets kept masked and absolute paths no longer
+  dumped.
+- `agent.wrap_up_seconds` (default 60) for the post-limit wrap-up call.
+- `tests/data/ledgers/narration-multi-currency.beancount` and
+  `tests/unit/test_real_data_issues.py` covering every issue above.
 - Reasoning-model support: `reasoning_content` is captured (`ChatResponse.reasoning`),
   streamed as `reasoning_delta` SSE events, and shown as a collapsible "Thinking…"
   block in the UI. On a local reasoning model this cut time-to-first-token from
@@ -38,6 +44,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/eval_local.py` to evaluate the agent stack against a live endpoint.
 
 ### Fixed
+- **Merchants & recurring pages were empty for narration-only ledgers.**
+  `merchant_key()` now falls back to a merchant derived from the narration
+  (stripping card/terminal numbers and delimiters) when `payee` is empty, and
+  recurrence detection uses it too.
+- **Account pages listed the account as its own sub-account** (and every
+  descendant). Direct children are used now, and pages show both own and
+  aggregate balances with subtree transaction counts.
+- **Wiki paths used OS-native separators**, producing backslash Obsidian links
+  and platform-dependent tool I/O on Windows. All serialized paths now use
+  forward slashes (`as_posix()`).
+- **`overview.md` linked to `accounts/_index.md`, `merchants/_index.md` and
+  `recurring/_index.md`, which were never generated.** They are now written,
+  and hidden from the main index and search.
+- **Spending/cashflow pages silently dropped every currency but the first.**
+  They now report each currency in its own section and list the currencies
+  included; amounts are never mixed or dropped.
+- **`wiki_search` had no stemming or word boundaries** — "groceries" missed
+  `Expenses:Grocery`, and "net worth" matched "Internet". Search now tokenizes,
+  lightly stems, scores title/body term frequency, and keeps substring matching
+  only as a fallback.
+- **Portfolio listed closed (zero-unit) positions as holdings and had no
+  valuation.** Zero-net positions move to a "closed positions" list, and cost
+  basis plus latest market value are included when price data exists.
+- **`list_accounts` returned non-recursive balances** (every parent showed 0),
+  with no aggregation, substring filter or cap. It now returns `balance` and
+  `aggregate_balance`, supports `contains`, sorts by absolute aggregate balance
+  and caps output (reporting `total_matching`/`truncated`).
+- **Native `confirm()`/`prompt()` blocked the page** (hanging automation and
+  embedded contexts). Conversation delete is a two-step inline confirm and
+  rename is inline editing.
+- **Hitting an execution limit returned a hard error with nothing persisted.**
+  The runtime now makes one tool-less "wrap up" call and returns a best-effort
+  answer flagged `partial` with a `stop_reason`; interrupted runs persist their
+  history instead of vanishing.
 - Timeouts are now bounded: the remaining budget is recomputed before every retry,
   read timeouts are no longer retried (previously a 45s budget could run 149s), and
   timeouts surface as `ProviderTimeoutError` → HTTP 504 instead of `429 LimitExceeded`.

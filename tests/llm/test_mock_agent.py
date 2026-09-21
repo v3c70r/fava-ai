@@ -155,8 +155,10 @@ def test_agent_max_iterations():
         config={"max_iterations": 3, "max_tool_calls": 10},
     )
 
-    with pytest.raises(LimitExceeded):
-        agent.run("Test", provider_name="mock")
+    # Hitting the iteration cap now yields a best-effort partial answer.
+    result = agent.run("Test", provider_name="mock")
+    assert result["partial"] is True
+    assert "max_iterations" in result["stop_reason"]
 
 
 def test_agent_tool_error_handling():

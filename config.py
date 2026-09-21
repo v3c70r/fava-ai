@@ -14,6 +14,8 @@ DEFAULT_CONFIG: dict[str, dict] = {
         "max_context_tokens": 12000,
         "max_tool_result_chars": 8000,
         "retries": 2,
+        # Grace budget for the final tool-less "wrap up" call after a limit.
+        "wrap_up_seconds": 60,
     },
     "knowledge": {
         "auto_extract": True,
@@ -89,6 +91,7 @@ _FLAT_PROVIDER_KEYS = ("type", "api_key", "base_url", "model", "timeout", "test_
 _FLAT_AGENT_KEYS = (
     "max_iterations", "max_tool_calls", "timeout_seconds", "system_prompt",
     "max_context_tokens", "max_tool_result_chars", "retries", "max_tokens",
+    "wrap_up_seconds",
 )
 
 _ALLOWED_AGENT_KEYS = set(_FLAT_AGENT_KEYS)

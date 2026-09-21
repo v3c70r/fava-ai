@@ -138,6 +138,54 @@ def test_chat_stream_error_frame(client, ext):
     assert frames[-1]["error_type"] == "ProviderError"
 
 
+def test_chat_surfaces_partial_flag(client, ext):
+    result = make_result()
+    result["partial"] = True
+    result["stop_reason"] = "max_iterations"
+    ext._agent_runtime = StubRuntime(result)
+
+    body = client.post("/chat", json={"message": "hi"}).get_json()
+    assert body["partial"] is True
+    assert body["stop_reason"] == "max_iterations"
+
+
+def test_chat_stream_done_carries_partial(client, ext):
+    result = make_result()
+    result["partial"] = True
+    result["stop_reason"] = "max_tool_calls"
+    ext._agent_runtime = StubRuntime(events=[
+        {"type": "content_delta", "content": "partial answer"},
+        {"type": "done", "result": result},
+    ])
+
+    frames = _parse_sse(
+        client.post("/chat_stream", json={"message": "hi"}).get_data(as_text=True)
+    )
+    assert frames[-1]["type"] == "done"
+    assert frames[-1]["partial"] is True
+    assert frames[-1]["stop_reason"] == "max_tool_calls"
+
+
+def test_agent_error_persists_partial_history(client, ext):
+    """An interrupted run must leave a trace, not vanish."""
+    from fava_ai.agent.errors import ProviderError
+    from fava_ai.models.base import Message
+
+    error = ProviderError("boom")
+    error.conversation_id = "conv-err"
+    error.partial_messages = [Message(role="user", content="my question")]
+    ext._agent_runtime = StubRuntime(error=error)
+
+    resp = client.post("/chat", json={"message": "my question"})
+    assert resp.status_code == 502
+    assert resp.get_json()["conversation_id"] == "conv-err"
+
+    conv = client.get("/conversations?id=conv-err").get_json()
+    roles = [m["role"] for m in conv["messages"]]
+    assert "user" in roles
+    assert "assistant" in roles  # interruption note
+
+
 def test_chat_stream_forwards_reasoning_deltas(client, ext):
     result = make_result()
     ext._agent_runtime = StubRuntime(events=[

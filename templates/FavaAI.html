@@ -121,6 +121,19 @@
 .fava-ai-conv-item .conv-delete:hover {
   color: #e44;
 }
+.fava-ai-conv-item.confirming .conv-delete {
+  opacity: 1;
+  color: #e44;
+  font-weight: 600;
+}
+.fava-ai-conv-item .conv-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #66a;
+  border-radius: 4px;
+}
 .fava-ai-sidebar-footer {
   padding: 10px 12px;
   border-top: 1px solid #ddd;
@@ -335,6 +348,41 @@
   color: #999;
 }
 .assistant-note p { margin: 0; }
+.partial-note {
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: #fff6e5;
+  border: 1px solid #f0d9a8;
+  border-radius: 6px;
+  color: #8a6100;
+  font-size: 12px;
+}
+.config-form label {
+  display: block;
+  margin: 8px 0 2px;
+  font-size: 11px;
+  color: #666;
+}
+.config-form input,
+.config-form select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+.config-form button {
+  margin-top: 12px;
+}
+.config-status { margin-top: 6px; font-size: 12px; }
+.config-status.ok { color: #2a7; }
+.config-status.err { color: #c33; }
+.config-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #888;
+}
 .reasoning {
   margin: 0 0 8px;
   padding: 6px 10px;

@@ -1,5 +1,6 @@
 """Runtime error taxonomy, provenance and message-history tests."""
 
+import time
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from fava_ai.agent.errors import (
 )
 from fava_ai.agent.runtime import AgentRuntime
 from fava_ai.config import ConfigManager
-from fava_ai.models.base import BaseProvider, ChatResponse, FunctionCall
+from fava_ai.models.base import BaseProvider, ChatResponse, FunctionCall, Message
 from fava_ai.models.base import ToolCall as LLMToolCall
 from fava_ai.models.registry import ProviderRegistry
 from fava_ai.tools.base import BaseTool, ToolResult
@@ -95,14 +96,14 @@ def test_empty_response_raises_empty_response_error():
     with pytest.raises(EmptyResponseError):
         agent.run("hi", provider_name="scripted")
 
-
 def test_provider_exception_is_wrapped():
     agent = _make_agent(ScriptedProvider(error=RuntimeError("connection reset")))
     with pytest.raises(ProviderError, match="connection reset"):
         agent.run("hi", provider_name="scripted")
 
 
-def test_max_iterations_still_raises_limit_exceeded():
+def test_max_iterations_returns_partial():
+    """Hitting a limit must yield a best-effort partial answer, not an error."""
     responses = [
         ChatResponse(tool_calls=[
             LLMToolCall(id=str(i), function=FunctionCall(name="error_tool", arguments="{}"))
@@ -114,8 +115,31 @@ def test_max_iterations_still_raises_limit_exceeded():
         tools=[ErrorTool()],
         config={"max_iterations": 2, "max_tool_calls": 10},
     )
-    with pytest.raises(LimitExceeded):
-        agent.run("hi", provider_name="scripted")
+    result = agent.run("hi", provider_name="scripted")
+
+    assert result["partial"] is True
+    assert "max_iterations" in result["stop_reason"]
+    assert result["content"]
+    # The gathered tool work is preserved in the message history.
+    assert any(m.role == "tool" for m in result["messages"])
+
+
+def test_max_tool_calls_returns_partial():
+    responses = [
+        ChatResponse(tool_calls=[
+            LLMToolCall(id=str(i), function=FunctionCall(name="error_tool", arguments="{}"))
+        ])
+        for i in range(5)
+    ]
+    agent = _make_agent(
+        ScriptedProvider(responses),
+        tools=[ErrorTool()],
+        config={"max_iterations": 10, "max_tool_calls": 2},
+    )
+    result = agent.run("hi", provider_name="scripted")
+
+    assert result["partial"] is True
+    assert "max_tool_calls" in result["stop_reason"]
 
 
 def test_final_assistant_message_is_included_in_new_messages():
@@ -240,31 +264,43 @@ def test_auth_error_is_not_retried(monkeypatch):
     assert provider.calls == 1
 
 
-def test_timeout_is_not_retried_and_maps_to_504(monkeypatch):
+def test_timeout_is_not_retried(monkeypatch):
     """A read timeout must fail fast, not be retried (see eval findings)."""
     from fava_ai.agent.errors import ProviderTimeoutError
 
-    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
     provider = FlakyProvider(fail_times=5, exc=_FakeTimeout("too slow"))
     agent = _make_agent(provider, config={"retries": 3, "max_iterations": 3})
+    messages = [Message(role="user", content="hi")]
+    deadline = time.time() + 30
 
     with pytest.raises(ProviderTimeoutError) as excinfo:
-        agent.run("hi", provider_name="scripted")
+        agent._call_provider(provider, messages, [], deadline, None)
 
     assert excinfo.value.http_status == 504
-    assert provider.calls == 1  # no retries
+    assert provider.calls == 1  # exactly one attempt, no retries
 
 
-def test_deadline_exceeded_raises_timeout():
-    from fava_ai.agent.errors import ProviderTimeoutError
+def test_timeout_yields_partial_answer(monkeypatch):
+    """A timeout is recovered into a partial answer rather than a hard error."""
+    monkeypatch.setattr("fava_ai.agent.runtime.time.sleep", lambda _s: None)
+    # First call times out; the wrap-up call succeeds.
+    provider = FlakyProvider(fail_times=1, exc=_FakeTimeout("too slow"))
+    agent = _make_agent(provider, config={"retries": 3, "max_iterations": 3})
 
+    result = agent.run("hi", provider_name="scripted")
+
+    assert result["partial"] is True
+    assert result["content"]
+
+
+def test_deadline_exceeded_yields_partial():
     provider = FlakyProvider(fail_times=0, exc=RuntimeError("unused"))
     agent = _make_agent(provider, config={"timeout_seconds": 1, "max_iterations": 3})
     # Force the deadline into the past: the very first iteration must abort.
     agent._limits.timeout_seconds = -1
-    with pytest.raises(ProviderTimeoutError):
-        agent.run("hi", provider_name="scripted")
-    assert provider.calls == 0
+
+    result = agent.run("hi", provider_name="scripted")
+    assert result["partial"] is True
 
 
 def test_max_tokens_passed_to_provider():

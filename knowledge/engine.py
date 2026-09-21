@@ -48,6 +48,7 @@ class KnowledgeEngine:
                     total_stats[name] = {"error": str(e)}
 
             self._generate_overview(entries, options)
+            self._generate_section_indexes()
         self.wiki.append_log("extraction_complete", total_stats)
 
         # Write hash AFTER successful extraction (atomically).
@@ -69,6 +70,15 @@ class KnowledgeEngine:
                 "- log.md is the chronological audit log\n",
                 encoding="utf-8",
             )
+
+    def _generate_section_indexes(self):
+        """Write the per-section `_index.md` pages linked from overview.md."""
+        for section, title in (
+            ("accounts", "Accounts"),
+            ("merchants", "Merchants"),
+            ("recurring", "Recurring"),
+        ):
+            self.wiki.write_section_index(section, title)
 
     def _generate_overview(self, entries, options):
         txns = [e for e in entries if type(e).__name__ == "Transaction"]

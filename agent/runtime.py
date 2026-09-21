@@ -7,10 +7,12 @@ Two entry points share the same tool-execution logic:
   ``done`` event carrying the same result shape as :meth:`run`.
 """
 
+import logging
 import time
 import uuid
 
 from fava_ai.agent.errors import (
+    AgentError,
     EmptyResponseError,
     LimitExceeded,
     NoProviderError,
@@ -32,6 +34,8 @@ _RETRYABLE_ERROR_NAMES = {
 }
 
 _TIMEOUT_ERROR_NAMES = {"Timeout", "APITimeoutError"}
+
+logger = logging.getLogger(__name__)
 
 
 def _is_timeout(exc: BaseException) -> bool:
@@ -72,6 +76,7 @@ class AgentRuntime:
             max_tool_result_chars=agent_config.get("max_tool_result_chars", 8000),
             retries=agent_config.get("retries", 2),
             max_tokens=agent_config.get("max_tokens"),
+            wrap_up_seconds=agent_config.get("wrap_up_seconds", 60),
         )
 
     # ── setup helpers ─────────────────────────────────────────────
@@ -196,6 +201,49 @@ class AgentRuntime:
                 time.sleep(min(2 ** attempt, 8))
         raise ProviderError("Provider request failed")  # pragma: no cover
 
+    # ── graceful degradation on limits ────────────────────────────
+
+    def _finalize_partial(self, provider, messages, model) -> str | None:
+        """One tool-less call asking the model to answer with what it has.
+
+        Used when an execution limit is hit so the user gets a best-effort
+        answer (clearly marked partial) instead of a hard error.
+        """
+        instruction = Message(role="user", content=(
+            "You have reached the execution limit for this request. Do NOT call "
+            "any more tools. Answer the user's original question as completely "
+            "as you can using only the information already gathered above, and "
+            "clearly state what is uncertain or missing."
+        ))
+        try:
+            response = provider.chat(
+                [*messages, instruction], tools=None, model=model,
+                timeout=max(5, self._limits.wrap_up_seconds),
+            )
+            return response.content or None
+        except Exception:  # noqa: BLE001 - best effort only
+            logger.warning("Wrap-up call after a limit failed", exc_info=True)
+            return None
+
+    def _partial_result(self, provider, messages, existing_count, conversation_id,
+                        tracker, model, tool_call_count, iteration, error) -> dict:
+        text = self._finalize_partial(provider, messages, model)
+        if not text:
+            text = (
+                "I was unable to produce a complete answer before reaching a "
+                f"limit ({error}). Please try a narrower question or raise the "
+                "configured limits."
+            )
+        tracker.record_synthesis(iteration)
+        messages.append(Message(role="assistant", content=text))
+        result = self._result(
+            conversation_id, text, messages, existing_count, tracker, None,
+            tool_call_count,
+        )
+        result["partial"] = True
+        result["stop_reason"] = str(error)
+        return result
+
     # ── blocking loop ─────────────────────────────────────────────
 
     def run(
@@ -216,43 +264,55 @@ class AgentRuntime:
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
         deadline = time.time() + self._limits.timeout_seconds
+        iteration = 0
 
-        for iteration in range(self._limits.max_iterations):
-            if time.time() >= deadline:
-                raise ProviderTimeoutError(
-                    f"Model did not respond within {self._limits.timeout_seconds}s"
-                )
+        try:
+            for iteration in range(self._limits.max_iterations):
+                if time.time() >= deadline:
+                    raise ProviderTimeoutError(
+                        f"Model did not respond within {self._limits.timeout_seconds}s"
+                    )
 
-            tracker.record_plan(iteration)
-            response = self._call_provider(provider, messages, tools, deadline, model)
+                tracker.record_plan(iteration)
+                response = self._call_provider(provider, messages, tools, deadline, model)
 
-            if response.has_tool_calls():
-                messages.append(response.as_message())
-                for tc in response.tool_calls:
-                    tool_call_count += 1
-                    if tool_call_count > self._limits.max_tool_calls:
-                        raise LimitExceeded("max_tool_calls")
-                    content, _error, tool_name = self._run_tool_call(tc, iteration, tracker)
-                    messages.append(Message(
-                        role="tool", content=content,
-                        tool_call_id=tc.id, name=tool_name,
-                    ))
+                if response.has_tool_calls():
+                    messages.append(response.as_message())
+                    for tc in response.tool_calls:
+                        tool_call_count += 1
+                        if tool_call_count > self._limits.max_tool_calls:
+                            raise LimitExceeded("max_tool_calls")
+                        content, _error, tool_name = self._run_tool_call(tc, iteration, tracker)
+                        messages.append(Message(
+                            role="tool", content=content,
+                            tool_call_id=tc.id, name=tool_name,
+                        ))
 
-            elif response.content:
-                tracker.record_synthesis(iteration)
-                messages.append(response.as_message())
-                return self._result(
-                    conversation_id, response.content, messages, existing_count,
-                    tracker, response.usage, tool_call_count,
-                )
+                elif response.content:
+                    tracker.record_synthesis(iteration)
+                    messages.append(response.as_message())
+                    return self._result(
+                        conversation_id, response.content, messages, existing_count,
+                        tracker, response.usage, tool_call_count,
+                    )
 
-            else:
-                raise EmptyResponseError(
-                    "The model returned an empty response "
-                    "(no content and no tool calls)."
-                )
+                else:
+                    raise EmptyResponseError(
+                        "The model returned an empty response "
+                        "(no content and no tool calls)."
+                    )
 
-        raise LimitExceeded("max_iterations")
+            raise LimitExceeded("max_iterations")
+        except (LimitExceeded, ProviderTimeoutError) as e:
+            return self._partial_result(
+                provider, messages, existing_count, conversation_id, tracker,
+                model, tool_call_count, iteration, e,
+            )
+        except AgentError as e:
+            # Keep whatever progress we made so the endpoint can persist it.
+            e.partial_messages = messages[existing_count:]
+            e.conversation_id = conversation_id
+            raise
 
     # ── streaming loop ────────────────────────────────────────────
 
@@ -268,8 +328,9 @@ class AgentRuntime:
         """Yield UI events, ending with ``{"type": "done", "result": {...}}``.
 
         Event types: ``reasoning_delta``, ``content_delta``, ``tool_call_start``,
-        ``tool_call``, ``done``. Errors propagate as :class:`AgentError` for the
-        caller to map.
+        ``tool_call``, ``done``. When an execution limit is reached a best-effort
+        partial answer is delivered as a normal ``done`` (with
+        ``result["partial"] = True``) instead of a hard error.
         """
         provider = self._resolve_provider(provider_name)
         conversation_id = conversation_id or str(uuid.uuid4())
@@ -280,98 +341,112 @@ class AgentRuntime:
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
         deadline = time.time() + self._limits.timeout_seconds
+        iteration = 0
 
-        for iteration in range(self._limits.max_iterations):
-            if time.time() >= deadline:
-                raise ProviderTimeoutError(
-                    f"Model did not respond within {self._limits.timeout_seconds}s"
-                )
-
-            tracker.record_plan(iteration)
-
-            content_parts: list[str] = []
-            reasoning_parts: list[str] = []
-            final_tool_calls = None
-            attempts = max(1, self._limits.retries + 1)
-            for attempt in range(attempts):
-                try:
-                    stream = provider.chat_stream(
-                        messages, tools=tools, model=model, **self._invoke_kwargs()
+        try:
+            for iteration in range(self._limits.max_iterations):
+                if time.time() >= deadline:
+                    raise ProviderTimeoutError(
+                        f"Model did not respond within {self._limits.timeout_seconds}s"
                     )
-                    for chunk in stream:
-                        if time.time() >= deadline:
+
+                tracker.record_plan(iteration)
+
+                content_parts: list[str] = []
+                reasoning_parts: list[str] = []
+                final_tool_calls = None
+                attempts = max(1, self._limits.retries + 1)
+                for attempt in range(attempts):
+                    try:
+                        stream = provider.chat_stream(
+                            messages, tools=tools, model=model, **self._invoke_kwargs()
+                        )
+                        for chunk in stream:
+                            if time.time() >= deadline:
+                                raise ProviderTimeoutError(
+                                    "Model did not respond within "
+                                    f"{self._limits.timeout_seconds}s"
+                                )
+                            if chunk.reasoning:
+                                reasoning_parts.append(chunk.reasoning)
+                                yield {
+                                    "type": "reasoning_delta",
+                                    "content": chunk.reasoning,
+                                }
+                            if chunk.content:
+                                content_parts.append(chunk.content)
+                                yield {"type": "content_delta", "content": chunk.content}
+                            if chunk.tool_calls:
+                                final_tool_calls = chunk.tool_calls
+                        break
+                    except (LimitExceeded, ProviderError):
+                        raise
+                    except Exception as e:  # noqa: BLE001 - normalise provider failures
+                        if _is_timeout(e):
                             raise ProviderTimeoutError(
-                                "Model did not respond within "
-                                f"{self._limits.timeout_seconds}s"
-                            )
-                        if chunk.reasoning:
-                            reasoning_parts.append(chunk.reasoning)
-                            yield {
-                                "type": "reasoning_delta",
-                                "content": chunk.reasoning,
-                            }
-                        if chunk.content:
-                            content_parts.append(chunk.content)
-                            yield {"type": "content_delta", "content": chunk.content}
-                        if chunk.tool_calls:
-                            final_tool_calls = chunk.tool_calls
-                    break
-                except (LimitExceeded, ProviderError):
-                    raise
-                except Exception as e:  # noqa: BLE001 - normalise provider failures
-                    if _is_timeout(e):
-                        raise ProviderTimeoutError(
-                            f"Model timed out after {self._limits.timeout_seconds}s"
-                        ) from e
-                    # Only retry if nothing has been streamed yet (reasoning
-                    # included), otherwise we would duplicate rendered output.
-                    if (
-                        content_parts or reasoning_parts
-                        or attempt == attempts - 1 or not _is_retryable(e)
-                    ):
-                        raise ProviderError(f"Provider stream failed: {e}") from e
-                    final_tool_calls = None
-                    time.sleep(min(2 ** attempt, 8))
+                                f"Model timed out after {self._limits.timeout_seconds}s"
+                            ) from e
+                        # Only retry if nothing has been streamed yet (reasoning
+                        # included), otherwise we would duplicate rendered output.
+                        if (
+                            content_parts or reasoning_parts
+                            or attempt == attempts - 1 or not _is_retryable(e)
+                        ):
+                            raise ProviderError(f"Provider stream failed: {e}") from e
+                        final_tool_calls = None
+                        time.sleep(min(2 ** attempt, 8))
 
-            if final_tool_calls:
-                messages.append(Message(
-                    role="assistant",
-                    content="".join(content_parts) or None,
-                    tool_calls=final_tool_calls,
-                ))
-                for tc in final_tool_calls:
-                    tool_call_count += 1
-                    if tool_call_count > self._limits.max_tool_calls:
-                        raise LimitExceeded("max_tool_calls")
-
-                    yield {"type": "tool_call_start", "tool_name": tc.function.name}
-                    content, _error, tool_name = self._run_tool_call(
-                        tc, iteration, tracker
-                    )
+                if final_tool_calls:
                     messages.append(Message(
-                        role="tool", content=content,
-                        tool_call_id=tc.id, name=tool_name,
+                        role="assistant",
+                        content="".join(content_parts) or None,
+                        tool_calls=final_tool_calls,
                     ))
-                    yield {
-                        "type": "tool_call",
-                        "step": tracker.steps[-1].to_dict(),
-                    }
+                    for tc in final_tool_calls:
+                        tool_call_count += 1
+                        if tool_call_count > self._limits.max_tool_calls:
+                            raise LimitExceeded("max_tool_calls")
 
-            elif content_parts:
-                content = "".join(content_parts)
-                messages.append(Message(role="assistant", content=content))
-                tracker.record_synthesis(iteration)
-                result = self._result(
-                    conversation_id, content, messages, existing_count,
-                    tracker, None, tool_call_count,
-                )
-                yield {"type": "done", "result": result}
-                return
+                        yield {"type": "tool_call_start", "tool_name": tc.function.name}
+                        content, _error, tool_name = self._run_tool_call(
+                            tc, iteration, tracker
+                        )
+                        messages.append(Message(
+                            role="tool", content=content,
+                            tool_call_id=tc.id, name=tool_name,
+                        ))
+                        yield {
+                            "type": "tool_call",
+                            "step": tracker.steps[-1].to_dict(),
+                        }
 
-            else:
-                raise EmptyResponseError(
-                    "The model returned an empty response "
-                    "(no content and no tool calls)."
-                )
+                elif content_parts:
+                    content = "".join(content_parts)
+                    messages.append(Message(role="assistant", content=content))
+                    tracker.record_synthesis(iteration)
+                    result = self._result(
+                        conversation_id, content, messages, existing_count,
+                        tracker, None, tool_call_count,
+                    )
+                    yield {"type": "done", "result": result}
+                    return
 
-        raise LimitExceeded("max_iterations")
+                else:
+                    raise EmptyResponseError(
+                        "The model returned an empty response "
+                        "(no content and no tool calls)."
+                    )
+
+            raise LimitExceeded("max_iterations")
+        except (LimitExceeded, ProviderTimeoutError) as e:
+            result = self._partial_result(
+                provider, messages, existing_count, conversation_id, tracker,
+                model, tool_call_count, iteration, e,
+            )
+            yield {"type": "content_delta", "content": result["content"]}
+            yield {"type": "done", "result": result}
+            return
+        except AgentError as e:
+            e.partial_messages = messages[existing_count:]
+            e.conversation_id = conversation_id
+            raise
