@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/eval_local.py` to evaluate the agent stack against a live endpoint.
 
 ### Fixed
+- **Scrolling up while the answer streams no longer fights the user.** The
+  message area used to jump to the bottom on every token. It now follows only
+  while the user is pinned to the bottom (tracked by a scroll listener), and
+  jumps to the newest content on a new turn or conversation load.
+- **The `<details>` disclosure arrow no longer overlaps its label.** Fava
+  styles every `<details>` globally (arrow via `summary:before` at `left:10px`
+  with `padding-left:30px`, plus `min-width:400px`); the inline reasoning and
+  tool-activity blocks overrode that padding without reserving the space. They
+  now reset Fava's `details`/`summary` rules and reserve the arrow's room.
 - **Tool calls no longer pile up below the answer.** Each `tool_call` used to
   append a visible "Tool: …" row that never collapsed; all calls now live in a
   single collapsed "Tool activity (N)" block, with only the one-line provenance

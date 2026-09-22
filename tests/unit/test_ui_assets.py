@@ -88,3 +88,25 @@ def test_js_element_ids_exist_in_template():
         if not i.startswith("cfg-") and f'id="{i}"' not in HTML
     ]
     assert missing == [], missing
+
+
+# ── #18 scrolling & <details> marker ──────────────────────────────
+
+
+def test_scroll_follows_only_when_pinned():
+    """Auto-scroll must not fight the user scrolling up (issue #18)."""
+    assert "scrollToBottom(force = false)" in JS
+    # Pinned state is tracked by a scroll listener (not measured after append).
+    assert "_atBottom" in JS
+    assert "el.scrollHeight - el.scrollTop - el.clientHeight < 80" in JS
+    # New turns and conversation loads still jump to the latest.
+    assert JS.count("scrollToBottom(true)") >= 2
+
+
+def test_fava_details_styles_are_reset():
+    """Fava styles every <details>; our inline blocks must override it (#18)."""
+    # Leave room for Fava's absolutely-positioned summary::before arrow,
+    # otherwise it overlaps the label (the reported bug).
+    assert "padding: .25em .5em .25em 30px" in HTML
+    # Drop Fava's `details { min-width: 400px }` so the block fits the panel.
+    assert "min-width: 0" in HTML

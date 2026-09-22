@@ -365,23 +365,48 @@
   border-width: 2px;
 }
 
-/* All tool calls live in one collapsed block (issue #15). */
+/* Fava styles every <details> for its report pages: the arrow is drawn by
+   `summary:before` at left:10px with `padding-left:30px` on the summary, and
+   `details` has `min-width:400px`. Reset that for our inline blocks so the
+   arrow does not overlap the label and the block fits the message column. */
+.reasoning,
 .tool-activity {
-  margin-top: 8px;
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 0;
   border: 1px solid var(--border, #d9d9d9);
   border-radius: 6px;
   background: var(--background, #fff);
   font-size: 12px;
 }
+.tool-activity {
+  margin-top: 8px;
+}
+.reasoning {
+  border-style: dashed;
+  color: var(--text-color-lighter, #4d4d4d);
+}
+.reasoning > summary,
 .tool-activity > summary {
-  padding: 5px 10px;
-  cursor: pointer;
+  /* 30px reserves room for Fava's absolutely-positioned summary::before arrow. */
+  padding: .25em .5em .25em 30px;
+  background: transparent;
   color: var(--text-color-lightest, #666);
+  cursor: pointer;
   user-select: none;
 }
-.tool-activity-body {
+.reasoning > summary {
+  font-style: italic;
+}
+.reasoning .reasoning-text,
+.tool-activity .tool-activity-body {
   padding: 4px 10px 8px;
   border-top: 1px solid var(--border-lighter, #e6e6e6);
+}
+.reasoning .reasoning-text {
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
 }
 .tool-call { margin: 6px 0; }
 .tool-call-name {
@@ -399,27 +424,6 @@
   margin: 4px 0 0;
 }
 .tool-call-error { color: var(--red, #900); }
-
-.reasoning {
-  margin: 0 0 8px;
-  padding: 6px 10px;
-  background: var(--background, #fff);
-  border: 1px dashed var(--border, #d9d9d9);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-color-lighter, #4d4d4d);
-}
-.reasoning summary {
-  cursor: pointer;
-  color: var(--text-color-lightest, #666);
-  font-style: italic;
-}
-.reasoning .reasoning-text {
-  margin-top: 4px;
-  white-space: pre-wrap;
-  max-height: 240px;
-  overflow-y: auto;
-}
 .assistant-note {
   margin-top: 6px;
   font-size: 11px;
