@@ -46,6 +46,16 @@ export default {
     },
 
     wireEvents() {
+        // Track whether the user is at the bottom. Measuring on each append is
+        // wrong (a big chunk shifts the distance below the threshold even when
+        // the user was pinned), so the pinned state is maintained here.
+        this._atBottom = true;
+        this.el.messages.addEventListener('scroll', () => {
+            const el = this.el.messages;
+            this._atBottom =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        });
+
         this.el.sendBtn.addEventListener('click', () => this.sendMessage());
         this.el.input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -333,6 +343,7 @@ export default {
 
         this.addMessage('user', message);
         const assistantEl = this.addMessage('assistant', '');
+        this.scrollToBottom(true);  // a new turn always jumps to the latest
         assistantEl.classList.add('streaming');
         this.currentAssistantEl = assistantEl;
         this.currentAssistantText = '';
@@ -588,7 +599,7 @@ export default {
                 this.loadTraces(msg.id, el);
             }
         }
-        this.scrollToBottom();
+        this.scrollToBottom(true);
     },
 
     hasToolCalls(msg) {
@@ -601,8 +612,15 @@ export default {
         }
     },
 
-    scrollToBottom() {
-        this.el.messages.scrollTop = this.el.messages.scrollHeight;
+    scrollToBottom(force = false) {
+        const el = this.el.messages;
+        if (!el) return;
+        // Follow new output only while the user is pinned to the bottom, so
+        // scrolling up to read earlier content is not fought by auto-scroll.
+        if (force || this._atBottom !== false) {
+            el.scrollTop = el.scrollHeight;
+            this._atBottom = true;
+        }
     },
 
     // ── providers / prompts / panels ──────────────────────────────
