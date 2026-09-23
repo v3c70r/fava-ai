@@ -42,12 +42,7 @@ export default {
             panelTools: document.getElementById('panel-tools'),
             panelConfig: document.getElementById('panel-config'),
             panelProviders: document.getElementById('panel-providers'),
-            panelDocuments: document.getElementById('panel-documents'),
-            attachBtn: document.getElementById('attach-btn'),
-            fileInput: document.getElementById('file-input'),
-            attachmentChips: document.getElementById('attachment-chips'),
         };
-        this.attachments = [];
     },
 
     wireEvents() {
@@ -60,30 +55,6 @@ export default {
             this._atBottom =
                 el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         });
-
-        if (this.el.attachBtn && this.el.fileInput) {
-            this.el.attachBtn.addEventListener('click', () => this.el.fileInput.click());
-            this.el.fileInput.addEventListener('change', () => {
-                this.uploadFiles(this.el.fileInput.files);
-                this.el.fileInput.value = '';
-            });
-        }
-        const dropZone = this.el.input.closest('.fava-ai-input-area');
-        if (dropZone) {
-            ['dragenter', 'dragover'].forEach(evt => dropZone.addEventListener(evt, (e) => {
-                e.preventDefault();
-                dropZone.classList.add('dragover');
-            }));
-            ['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, (e) => {
-                e.preventDefault();
-                dropZone.classList.remove('dragover');
-            }));
-            dropZone.addEventListener('drop', (e) => {
-                if (e.dataTransfer && e.dataTransfer.files.length) {
-                    this.uploadFiles(e.dataTransfer.files);
-                }
-            });
-        }
 
         this.el.sendBtn.addEventListener('click', () => this.sendMessage());
         this.el.input.addEventListener('keydown', (e) => {
@@ -127,7 +98,6 @@ export default {
 
                 if (tab.dataset.tab === 'tools') this.loadTools();
                 if (tab.dataset.tab === 'config') this.loadConfig();
-                if (tab.dataset.tab === 'documents') this.loadDocuments();
                 if (tab.dataset.tab === 'providers') this.loadProvidersPanel();
             });
         });
@@ -292,7 +262,6 @@ export default {
             this.activeConvId = id;
             this.renderConvList();
             this.renderMessages(conv.messages || []);
-            this.loadAttachments(id);
         } catch (e) {
             console.error('Failed to load conversation:', e);
         }
@@ -347,8 +316,6 @@ export default {
 
     newConversation() {
         this.activeConvId = null;
-        this.attachments = [];
-        this.renderAttachments();
         this.el.messages.innerHTML = `
             <div class="fava-ai-welcome">
                 <h2>Fava AI Assistant</h2>
@@ -386,8 +353,6 @@ export default {
         if (this.currentProvider) body.provider = this.currentProvider;
         if (this.currentModel) body.model = this.currentModel;
         if (this.currentPrompt) body.prompt_id = this.currentPrompt;
-        const fileIds = this.attachments.filter(a => a.id).map(a => a.id);
-        if (fileIds.length) body.file_ids = fileIds;
 
         this.abortController = new AbortController();
         try {
@@ -655,196 +620,6 @@ export default {
         if (force || this._atBottom !== false) {
             el.scrollTop = el.scrollHeight;
             this._atBottom = true;
-        }
-    },
-
-    // ── attachments ───────────────────────────────────────────────
-
-    async uploadFiles(files) {
-        if (!files || !files.length) return;
-        for (const file of files) {
-            const form = new FormData();
-            form.append('file', file);
-            if (this.activeConvId) form.append('conversation_id', this.activeConvId);
-            try {
-                const response = await fetch(this.streamUrl('documents_upload'), {
-                    method: 'POST',
-                    body: form,
-                });
-                const doc = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    this.attachments.push({ id: '', name: file.name, error: doc.error || `HTTP ${response.status}` });
-                } else {
-                    this.attachments.push(doc);
-                }
-            } catch (e) {
-                this.attachments.push({ id: '', name: file.name, error: e.message });
-            }
-        }
-        this.renderAttachments();
-    },
-
-    async loadAttachments(conversationId) {
-        if (!conversationId) { this.attachments = []; this.renderAttachments(); return; }
-        try {
-            const docs = await this.api('GET', 'documents', null, { conversation_id: conversationId });
-            this.attachments = Array.isArray(docs) ? docs : [];
-        } catch (e) {
-            this.attachments = [];
-        }
-        this.renderAttachments();
-    },
-
-    renderAttachments() {
-        const box = this.el.attachmentChips;
-        if (!box) return;
-        box.innerHTML = '';
-        this.attachments.forEach((doc, index) => {
-            const chip = document.createElement('span');
-            chip.className = 'attachment-chip' + (doc.error ? ' error' : '');
-            chip.title = doc.error ? `${doc.name}: ${doc.error}` : (doc.source_path || doc.name);
-
-            const name = document.createElement('span');
-            name.className = 'name';
-            name.textContent = doc.error ? `${doc.name} — ${doc.error}` : doc.name;
-
-            const remove = document.createElement('span');
-            remove.className = 'remove';
-            remove.textContent = '\u00d7';
-            remove.addEventListener('click', () => {
-                this.attachments.splice(index, 1);
-                this.renderAttachments();
-            });
-
-            chip.appendChild(name);
-            chip.appendChild(remove);
-            box.appendChild(chip);
-        });
-    },
-
-    // ── documents panel ───────────────────────────────────────────
-
-    async loadDocuments() {
-        try {
-            const status = await this.api('GET', 'documents');
-            const byStatus = status.by_status || {};
-            const breakdown = Object.entries(byStatus).map(([k, v]) => `${k}: ${v}`).join(' · ');
-            const folders = (status.folders || []).map(f => this.esc(f)).join('<br>');
-
-            let html = '<h4>Documents</h4>';
-            html += `<p><strong>${status.documents ?? 0}</strong> document(s), ${status.chunks ?? 0} chunk(s).</p>`;
-            if (breakdown) html += `<p style="font-size:12px;">${this.esc(breakdown)}</p>`;
-            html += folders
-                ? `<p style="font-size:12px;">Folders:<br>${folders}</p>`
-                : '<p style="font-size:12px;">No folders configured. Set <code>documents.folders</code>, or Fava\'s documents folder option.</p>';
-            const embedding = status.embedding || {};
-            if (embedding.configured) {
-                html += `<p style="font-size:12px;">Semantic search: <strong>${this.esc(embedding.model || '')}</strong>`;
-                html += ` — ${embedding.embedded_chunks || 0}/${embedding.total_chunks || 0} chunks embedded.</p>`;
-            } else {
-                html += '<p style="font-size:12px;">Semantic search: not configured (keyword search only).<br>Set <code>documents.embedding.base_url</code> and <code>.model</code> to enable.</p>';
-            }
-            html += '<button id="docs-index-btn" class="btn btn-sm">Index now</button>';
-            if (embedding.configured) {
-                html += ' <button id="docs-embed-btn" class="btn btn-sm">Embed now</button>';
-                html += ' <button id="docs-embed-test-btn" class="btn btn-sm">Test</button>';
-            }
-            html += '<div id="docs-status" class="config-status"></div>';
-            html += '<h4 style="margin-top:14px;">Indexed</h4><div id="docs-list"></div>';
-            this.el.panelDocuments.innerHTML = html;
-
-            document.getElementById('docs-index-btn').addEventListener('click', () => this.indexDocuments());
-            const embedBtn = document.getElementById('docs-embed-btn');
-            if (embedBtn) embedBtn.addEventListener('click', () => this.embedDocuments());
-            const testBtn = document.getElementById('docs-embed-test-btn');
-            if (testBtn) testBtn.addEventListener('click', () => this.testEmbedding());
-            this.loadDocumentList();
-        } catch (e) {
-            this.el.panelDocuments.innerHTML = '<p style="color:red;">Failed to load documents</p>';
-        }
-    },
-
-    async indexDocuments() {
-        const status = document.getElementById('docs-status');
-        status.textContent = 'Indexing\u2026';
-        status.className = 'config-status';
-        try {
-            const stats = await this.api('POST', 'documents_index', {});
-            status.textContent = `Indexed ${stats.indexed} new, skipped ${stats.skipped}, errors ${stats.errors}.`;
-            status.className = 'config-status ok';
-            await this.loadDocuments();
-        } catch (e) {
-            status.textContent = 'Error: ' + (e.message || e);
-            status.className = 'config-status err';
-        }
-    },
-
-    async embedDocuments() {
-        const status = document.getElementById('docs-status');
-        status.textContent = 'Embedding\u2026';
-        status.className = 'config-status';
-        try {
-            const result = await this.api('POST', 'documents_embed', {});
-            status.textContent = `Embedded ${result.embedded} chunk(s)` +
-                (result.error ? ` — ${result.error}` : '.');
-            status.className = result.error ? 'config-status err' : 'config-status ok';
-            await this.loadDocuments();
-        } catch (e) {
-            status.textContent = 'Error: ' + (e.message || e);
-            status.className = 'config-status err';
-        }
-    },
-
-    async testEmbedding() {
-        const status = document.getElementById('docs-status');
-        try {
-            const result = await this.api('POST', 'documents_embed_test', {});
-            status.textContent = result.connected
-                ? `Embedding OK (${result.detail || 'connected'}).`
-                : `Embedding failed: ${result.error || 'unknown error'}`;
-            status.className = 'config-status ' + (result.connected ? 'ok' : 'err');
-        } catch (e) {
-            status.textContent = 'Error: ' + (e.message || e);
-            status.className = 'config-status err';
-        }
-    },
-
-    async loadDocumentList() {
-        const box = document.getElementById('docs-list');
-        if (!box) return;
-        try {
-            const docs = await this.api('GET', 'documents', null, { all: '1', limit: 100 });
-            if (!docs.length) {
-                box.innerHTML = '<p style="font-size:12px;">Nothing indexed yet.</p>';
-                return;
-            }
-            box.innerHTML = '';
-            for (const doc of docs) {
-                const row = document.createElement('div');
-                row.className = 'doc-row';
-                row.title = doc.source_path || '';
-                const label = document.createElement('span');
-                label.className = 'name';
-                label.textContent = `${doc.name} (${doc.status})`;
-                const remove = document.createElement('span');
-                remove.className = 'remove';
-                remove.textContent = '\u00d7';
-                remove.addEventListener('click', () => this.deleteDocument(doc.id));
-                row.appendChild(label);
-                row.appendChild(remove);
-                box.appendChild(row);
-            }
-        } catch (e) {
-            box.innerHTML = '<p style="font-size:12px;">Failed to list documents.</p>';
-        }
-    },
-
-    async deleteDocument(id) {
-        try {
-            await this.api('DELETE', 'documents', null, { id });
-            await this.loadDocuments();
-        } catch (e) {
-            console.error('Failed to delete document:', e);
         }
     },
 
