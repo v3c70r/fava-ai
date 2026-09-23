@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Chat document uploads (#20).** Attach receipts/statements (PDF or images) via the
+  paperclip or drag-and-drop; files are stored under `.fava-ai/documents/`, text is
+  extracted locally, attachments stay with the conversation, and the agent reads them
+  via `read_document` (small documents are inlined into the prompt).
+- **Document knowledge base (#21, phase 1).** Index existing document folders
+  (`documents.folders`, plus Fava's documents folder) into a local SQLite **FTS5
+  (BM25)** index with incremental, content-hash rebuilds. New `search_documents` and
+  `read_document` tools mirror the wiki tools, plus a **Docs** panel with status and
+  *Index now*.
+- **Optional semantic search (#21, phase 2).** An OpenAI-compatible
+  `documents.embedding` block (`base_url` + `api_key` + `model`) embeds chunks into
+  SQLite BLOBs and enables **hybrid retrieval** (BM25 + cosine, fused with reciprocal
+  rank fusion). Without it, search degrades gracefully to keyword-only.
+- **Read-only-safe filing (#20).** `file_document` returns a paste-ready beancount
+  entry (transaction with `attachment:` metadata + a `Document` entry). Appending it to
+  a dedicated file is opt-in via `tools.allow_ledger_writes` / `tools.ledger_writes_file`.
+- New endpoints: `GET`/`DELETE /documents`, `POST /documents_upload`,
+  `POST /documents_index`, `POST /documents_embed`, `POST /documents_embed_test`.
+- `pypdf` dependency for PDF text extraction (PDFs flag as unsupported if absent).
+
 ### Changed
 - **Configuration is now primarily the beancount directive.** The `fava-extension`
   line accepts flat single-endpoint keys (`provider`, `base_url`, `api_key`, `model`) and

@@ -229,6 +229,90 @@ Every response includes full provenance:
 | `list_dashboards` | List existing Fava dashboards |
 | `generate_dashboard` | Create dashboard definitions |
 | `generate_chart` | Create chart configurations |
+| `search_documents` | Search indexed documents/vouchers (BM25, +dense if configured) |
+| `read_document` | Read a document's extracted text by `document_id` |
+| `file_document` | Compose a beancount entry linking a document to a transaction |
+
+## Documents & Vouchers
+
+Attach receipts, statements, contracts or payslips to a question, and let the
+agent cross-check them against the ledger.
+
+### Upload in chat
+
+Use the paperclip (or drag files onto the input area). Files are stored under
+`.fava-ai/documents/<conversation>/`, their text is extracted locally, and they
+stay attached to the conversation so follow-up questions can refer to them
+("and the second one?"). Small documents are inlined into the prompt; larger
+ones are read on demand via the `read_document` tool.
+
+### Index your existing documents
+
+Point the extension at the folders your PDFs already live in:
+
+```yaml
+documents:
+  enabled: true
+  folders:
+    - ~/Documents/finances
+    - ~/Downloads/statements
+  max_file_mb: 25
+  max_pages: 50
+```
+
+The **Docs** tab shows the index status and has an *Index now* button (also
+`POST /documents_index`). Fava's own `documents` folder option is included
+automatically. Indexing is incremental — content-hashed files are skipped.
+
+### Optional: semantic search
+
+Add an OpenAI-compatible embeddings endpoint to enable hybrid retrieval
+(BM25 + cosine, fused). Without it, search is keyword-only (FTS5/BM25), which
+covers most personal-document queries:
+
+```yaml
+documents:
+  embedding:
+    base_url: http://192.168.0.92:8080/v1
+    api_key: ${EMBEDDING_API_KEY}
+    model: qwen3-4b-embedding
+```
+
+Use *Embed now* in the Docs tab (or `POST /documents_embed`). A *Test* button
+calls a one-token `/embeddings` request to verify the endpoint.
+
+> The endpoint must actually serve embeddings: llama.cpp needs `--embeddings`
+> (and many models are loaded without it), Ollama and OpenAI work as-is.
+
+### Filing a document into the ledger
+
+By default the extension stays **read-only**: `file_document` returns a
+paste-ready snippet — the transaction with `attachment:` metadata plus a
+`Document` entry pointing at the stored file:
+
+```beancount
+2024-03-05 * "Cafe Milano" "Lunch"
+  attachment: "documents/.../receipt.pdf"
+  Expenses:Food:Coffee    13.50 CAD
+  Assets:Bank:Checking   -13.50 CAD
+
+2024-03-05 document Expenses:Food:Coffee "documents/.../receipt.pdf"
+```
+
+To let the agent append such entries to a dedicated file (included from your
+journal), opt in explicitly:
+
+```yaml
+tools:
+  allow_ledger_writes: true
+  ledger_writes_file: documents.beancount
+```
+
+### Privacy
+
+Everything is local: files, extracted text and the index live under the config
+directory. Only extracted chunk text is ever sent to the model (which is your
+own provider).
 
 ## External Tool Plugins
 
@@ -342,7 +426,7 @@ The wiki (`wiki/`) may be committed — it's generated knowledge that compounds 
 - Python >= 3.10
 - [Fava](https://github.com/beancount/fava) >= 1.27
 - [Beancount](https://github.com/beancount/beancount) >= 2.3
-- `litellm` >= 1.85, `pyyaml` >= 6.0, `jinja2` >= 3.0, `requests` >= 2.28
+- `litellm` >= 1.85, `pyyaml` >= 6.0, `jinja2` >= 3.0, `requests` >= 2.28, `pypdf` >= 5.0
 
 ## Development
 
