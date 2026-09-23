@@ -106,6 +106,11 @@ class ReadDocumentTool(BaseTool):
         }
 
     def execute(self, document_id: str, chunk: int | None = None) -> ToolResult:
+        if chunk is not None:
+            try:
+                chunk = int(chunk)  # models often send "0" as a string
+            except (TypeError, ValueError):
+                chunk = None
         doc = self._store.read(document_id, chunk=chunk, max_chars=self._max_chars)
         if doc is None:
             message = f"Document not found: {document_id}"
@@ -123,11 +128,15 @@ class FileDocumentTool(BaseTool):
     """Compose a beancount entry that links a document to a transaction."""
 
     def __init__(self, store, ledger_dir: str | None = None,
-                 allow_writes: bool = False, writes_file: str = "documents.beancount"):
+                 allow_writes: bool = False, writes_file: str = "documents.beancount",
+                 main_ledger_path: str | None = None):
         self._store = store
         self._ledger_dir = ledger_dir
         self._allow_writes = allow_writes
-        self._writes_file = writes_file
+        # Only a plain filename inside the ledger directory is accepted, so a
+        # stray path cannot escape or point at the main journal.
+        self._writes_file = Path(writes_file or "documents.beancount").name
+        self._main_ledger_path = main_ledger_path
 
     @property
     def name(self) -> str:
@@ -197,17 +206,22 @@ class FileDocumentTool(BaseTool):
         account = link_account or postings[0].get("account", "")
         snippet = self._render_snippet(date, payee, narration, postings, path, account)
 
-        wrote = None
+        wrote, write_error = None, None
         if self._allow_writes and self._ledger_dir:
-            wrote = self._append_to_file(snippet)
+            wrote, write_error = self._append_to_file(snippet)
 
         payload = {"snippet": snippet, "document_id": document_id,
                    "document_path": path}
         if wrote:
             payload["written_to"] = wrote
+        if write_error:
+            # The model must never report a successful filing that did not
+            # actually land in the ledger.
+            payload["write_error"] = write_error
         return ToolResult(
             content=json.dumps(payload, indent=2, ensure_ascii=False),
-            metadata={"document_id": document_id, "written_to": wrote},
+            metadata={"document_id": document_id, "written_to": wrote,
+                      "write_error": write_error},
         )
 
     @staticmethod
@@ -226,17 +240,28 @@ class FileDocumentTool(BaseTool):
         lines.append(f'{date} document {account} "{path}"')
         return "\n".join(lines)
 
-    def _append_to_file(self, snippet: str) -> str | None:
+    def _append_to_file(self, snippet: str) -> tuple[str | None, str | None]:
+        """Append the snippet. Returns (path, error); error is set on failure."""
         ledger_dir = self._ledger_dir
         if not ledger_dir:
-            return None
+            return None, "no ledger directory"
+        target = Path(ledger_dir) / self._writes_file
+        # Never touch the main journal: the guarantee is "never modifies your
+        # beancount files", and only a dedicated included file may be written.
+        if self._main_ledger_path and (
+            target.resolve() == Path(self._main_ledger_path).resolve()
+        ):
+            return None, (
+                f"refusing to write to the main ledger file; "
+                f"set tools.ledger_writes_file to a dedicated file "
+                f"(currently {self._writes_file!r})"
+            )
         try:
-            target = Path(ledger_dir) / self._writes_file
             with open(target, "a", encoding="utf-8") as handle:
                 handle.write("\n" + snippet + "\n")
-            return str(target)
-        except OSError:
-            return None
+            return str(target), None
+        except OSError as e:
+            return None, str(e)
 
 
 def register_document_tools(registry, store, ledger=None, tools_config=None):
@@ -251,4 +276,5 @@ def register_document_tools(registry, store, ledger=None, tools_config=None):
         ledger_dir=ledger_dir,
         allow_writes=bool(tools_config.get("allow_ledger_writes", False)),
         writes_file=tools_config.get("ledger_writes_file", "documents.beancount"),
+        main_ledger_path=getattr(ledger, "beancount_file_path", None),
     ))

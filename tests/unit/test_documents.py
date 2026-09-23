@@ -410,3 +410,76 @@ def test_hybrid_fuses_bm25_and_dense(store, docs_dir, monkeypatch):
     # push an unrelated document above it.
     names = [h["name"] for h in store.search("cafe latte", limit=3)]
     assert "receipt-cafe.txt" in names
+
+
+# ── review fixes: filing safety ───────────────────────────────────
+
+
+def test_file_document_refuses_to_write_to_main_ledger(store, docs_dir, tmp_path):
+    store.scan_folders([docs_dir])
+    doc = next(d for d in store.list_documents() if d["name"].startswith("lease"))
+    main_ledger = tmp_path / "main.beancount"
+    main_ledger.write_text("")
+
+    tool = FileDocumentTool(
+        store, ledger_dir=str(tmp_path), allow_writes=True,
+        writes_file="main.beancount",  # misconfiguration: points at the journal
+        main_ledger_path=str(main_ledger),
+    )
+    result = tool.execute(
+        document_id=doc["id"], date="2024-03-05",
+        postings=[{"account": "Expenses:Rent", "amount": "1.00 CAD"}],
+    )
+    payload = json.loads(result.content)
+    assert payload["write_error"]
+    assert "main ledger" in payload["write_error"]
+    assert "written_to" not in payload
+    assert main_ledger.read_text() == ""  # untouched
+
+
+def test_file_document_write_failure_is_surfaced(store, docs_dir, tmp_path):
+    store.scan_folders([docs_dir])
+    doc = store.list_documents()[0]
+    tool = FileDocumentTool(
+        store, ledger_dir=str(tmp_path / "missing-dir"), allow_writes=True,
+        writes_file="documents.beancount",
+    )
+    result = tool.execute(
+        document_id=doc["id"], date="2024-03-05",
+        postings=[{"account": "Expenses:Rent", "amount": "1.00 CAD"}],
+    )
+    payload = json.loads(result.content)
+    assert payload["write_error"]
+    assert "written_to" not in payload
+    assert tool.permission == "write"
+
+
+def test_file_document_writes_file_name_only(store, docs_dir, tmp_path):
+    """A path in ledger_writes_file must not escape the ledger directory."""
+    store.scan_folders([docs_dir])
+    doc = store.list_documents()[0]
+    escape_dir = tmp_path / "escape"
+    escape_dir.mkdir()
+    (escape_dir / "notes.beancount").write_text("")
+
+    tool = FileDocumentTool(
+        store, ledger_dir=str(tmp_path), allow_writes=True,
+        writes_file="escape/notes.beancount",
+    )
+    result = tool.execute(
+        document_id=doc["id"], date="2024-03-05",
+        postings=[{"account": "Expenses:Rent", "amount": "1.00 CAD"}],
+    )
+    written = Path(json.loads(result.content)["written_to"])
+    assert written.parent == tmp_path          # flattened into the ledger dir
+    assert written.name == "notes.beancount"
+
+
+def test_read_document_coerces_string_chunk(store, docs_dir):
+    store.scan_folders([docs_dir])
+    doc = next(d for d in store.list_documents() if d["name"].startswith("lease"))
+    tool = ReadDocumentTool(store)
+    as_string = json.loads(tool.execute(document_id=doc["id"], chunk="0").content)
+    as_int = json.loads(tool.execute(document_id=doc["id"], chunk=0).content)
+    assert as_string["text"] == as_int["text"]
+    assert as_string["text"]
