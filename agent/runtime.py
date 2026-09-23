@@ -98,7 +98,7 @@ class AgentRuntime:
             )
         return provider
 
-    def _prepare(self, messages, user_message, prompt_id):
+    def _prepare(self, messages, user_message, prompt_id, extra_context=None):
         """Insert the system prompt and the user turn into the message list."""
         if messages is None:
             messages = []
@@ -108,6 +108,8 @@ class AgentRuntime:
         system_prompt = self._context_builder.build_system_prompt(
             user_message, prompt_id=prompt_id
         )
+        if extra_context:
+            system_prompt += "\n\n" + extra_context
         if omitted:
             system_prompt += (
                 f"\n\nNote: {omitted} earlier message(s) were omitted to fit "
@@ -254,12 +256,15 @@ class AgentRuntime:
         provider_name: str | None = None,
         model: str | None = None,
         prompt_id: str | None = None,
+        extra_context: str | None = None,
     ) -> dict:
         provider = self._resolve_provider(provider_name)
         conversation_id = conversation_id or str(uuid.uuid4())
 
         tracker = ExecutionTracker()
-        messages, existing_count = self._prepare(messages, user_message, prompt_id)
+        messages, existing_count = self._prepare(
+            messages, user_message, prompt_id, extra_context
+        )
 
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
@@ -324,6 +329,7 @@ class AgentRuntime:
         provider_name: str | None = None,
         model: str | None = None,
         prompt_id: str | None = None,
+        extra_context: str | None = None,
     ):
         """Yield UI events, ending with ``{"type": "done", "result": {...}}``.
 
@@ -336,7 +342,9 @@ class AgentRuntime:
         conversation_id = conversation_id or str(uuid.uuid4())
 
         tracker = ExecutionTracker()
-        messages, existing_count = self._prepare(messages, user_message, prompt_id)
+        messages, existing_count = self._prepare(
+            messages, user_message, prompt_id, extra_context
+        )
 
         tools = self._tool_registry.get_definitions()
         tool_call_count = 0
