@@ -24,20 +24,6 @@ DEFAULT_CONFIG: dict[str, dict] = {
         # Loading arbitrary Python from .fava-ai/tools/ is opt-in: it executes
         # code from the ledger directory with the user's privileges.
         "external_enabled": False,
-        # Filing a document by appending to a dedicated beancount file is
-        # opt-in; the default is to return a paste-ready snippet only.
-        "allow_ledger_writes": False,
-        "ledger_writes_file": "documents.beancount",
-    },
-    "documents": {
-        # Aggregate existing documents into a searchable local index.
-        "enabled": False,
-        "folders": [],
-        "max_file_mb": 25,
-        "max_pages": 50,
-        "max_chars_per_doc": 200000,
-        # Optional OpenAI-compatible /v1/embeddings endpoint (phase 2).
-        "embedding": {},
     },
 }
 
@@ -98,7 +84,7 @@ KNOWN_BASE_URLS: dict[str, str] = {
     "xiaomi": "https://api.xiaomimimo.com/v1",
 }
 
-_ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools", "documents"}
+_ALLOWED_TOP_LEVEL = {"providers", "agent", "knowledge", "tools"}
 _ALLOWED_PROVIDER_KEYS = {"type", "api_key", "base_url", "model", "timeout", "test_connection_method"}
 #: Flat keys accepted directly in the beancount extension directive.
 _FLAT_PROVIDER_KEYS = ("type", "api_key", "base_url", "model", "timeout", "test_connection_method")
@@ -110,12 +96,7 @@ _FLAT_AGENT_KEYS = (
 
 _ALLOWED_AGENT_KEYS = set(_FLAT_AGENT_KEYS)
 _ALLOWED_KNOWLEDGE_KEYS = {"auto_extract"}
-_ALLOWED_TOOLS_KEYS = {"external_enabled", "allow_ledger_writes", "ledger_writes_file"}
-_ALLOWED_DOCUMENTS_KEYS = {
-    "enabled", "folders", "max_file_mb", "max_pages", "max_chars_per_doc",
-    "embedding",
-}
-_DOCUMENT_INT_KEYS = ("max_file_mb", "max_pages", "max_chars_per_doc")
+_ALLOWED_TOOLS_KEYS = {"external_enabled"}
 
 
 def _is_int(value) -> bool:
@@ -220,32 +201,8 @@ def validate_config(data) -> list[str]:
             extra = set(tools) - _ALLOWED_TOOLS_KEYS
             if extra:
                 errors.append(f"'tools' has unknown keys: {sorted(extra)}")
-            for key in ("external_enabled", "allow_ledger_writes"):
-                if key in tools and not isinstance(tools[key], bool):
-                    errors.append(f"'tools.{key}' must be a boolean")
-            if "ledger_writes_file" in tools and not isinstance(tools["ledger_writes_file"], str):
-                errors.append("'tools.ledger_writes_file' must be a string")
-
-    documents = data.get("documents")
-    if documents is not None:
-        if not isinstance(documents, dict):
-            errors.append("'documents' must be a mapping")
-        else:
-            extra = set(documents) - _ALLOWED_DOCUMENTS_KEYS
-            if extra:
-                errors.append(f"'documents' has unknown keys: {sorted(extra)}")
-            if "enabled" in documents and not isinstance(documents["enabled"], bool):
-                errors.append("'documents.enabled' must be a boolean")
-            if "folders" in documents and not (
-                isinstance(documents["folders"], list)
-                and all(isinstance(f, str) for f in documents["folders"])
-            ):
-                errors.append("'documents.folders' must be a list of strings")
-            for key in _DOCUMENT_INT_KEYS:
-                if key in documents and (not _is_int(documents[key]) or documents[key] < 1):
-                    errors.append(f"'documents.{key}' must be a positive integer")
-            if "embedding" in documents and not isinstance(documents["embedding"], dict):
-                errors.append("'documents.embedding' must be a mapping")
+            if "external_enabled" in tools and not isinstance(tools["external_enabled"], bool):
+                errors.append("'tools.external_enabled' must be a boolean")
 
     return errors
 
@@ -377,16 +334,6 @@ class ConfigManager:
         yaml_tools = self._yaml_config.get("tools", {})
         if isinstance(yaml_tools, dict):
             config.update(yaml_tools)
-        return config
-
-    def get_documents_config(self) -> dict:
-        config = dict(DEFAULT_CONFIG["documents"])
-        bc = self._extension_config
-        if isinstance(bc.get("documents"), dict):
-            config.update(bc["documents"])
-        yaml_documents = self._yaml_config.get("documents", {})
-        if isinstance(yaml_documents, dict):
-            config.update(yaml_documents)
         return config
 
     def get(self, key: str, default=None):
