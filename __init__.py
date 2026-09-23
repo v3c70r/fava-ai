@@ -74,6 +74,23 @@ class FavaAI(FavaExtensionBase):
         from fava_ai.tools.builtin.dashboard import register_dashboard_tools
         register_dashboard_tools(self._tool_registry, self.ledger)
 
+        from fava_ai.documents.embeddings import EmbeddingClient
+        from fava_ai.documents.store import DocumentStore
+        from fava_ai.tools.builtin.documents import register_document_tools
+
+        documents_config = self._config_manager.get_documents_config()
+        self._document_store = DocumentStore(
+            self.config_dir / "documents.db",
+            self.config_dir / "documents",
+            embedder=EmbeddingClient.from_config(documents_config.get("embedding")),
+        )
+        self._document_store.initialize()
+        # Registered regardless of folder indexing so chat uploads work.
+        register_document_tools(
+            self._tool_registry, self._document_store, self.ledger,
+            self._config_manager.get_tools_config(),
+        )
+
         from fava_ai.tools.loader import load_external_tools
         tools_config = self._config_manager.get_tools_config()
         if tools_config.get("external_enabled", False):
@@ -106,6 +123,10 @@ class FavaAI(FavaExtensionBase):
     @property
     def db(self):
         return self._db
+
+    @property
+    def document_store(self):
+        return self._document_store
 
     @property
     def provider_registry(self):
@@ -227,6 +248,8 @@ class FavaAI(FavaExtensionBase):
             provider_name = data.get("provider")
             model = data.get("model")
             prompt_id = data.get("prompt_id")
+            file_ids = data.get("file_ids") or []
+            extra_context = self._attachment_context(file_ids, conversation_id)
 
             result = self._agent_runtime.run(
                 user_message=user_message,
@@ -235,12 +258,15 @@ class FavaAI(FavaExtensionBase):
                 provider_name=provider_name,
                 model=model,
                 prompt_id=prompt_id,
+                extra_context=extra_context,
             )
 
             conv_id = result["conversation_id"]
             message_id = self._persist_exchange(
                 result, conversation_id, provider_name, user_message, model
             )
+            if file_ids and self._document_store:
+                self._document_store.assign_conversation(file_ids, conv_id)
 
             return jsonify({
                 "conversation_id": conv_id,
@@ -281,11 +307,14 @@ class FavaAI(FavaExtensionBase):
                 provider_name = data.get("provider")
                 model = data.get("model")
                 prompt_id = data.get("prompt_id")
+                file_ids = data.get("file_ids") or []
+                extra_context = self._attachment_context(file_ids, conversation_id)
 
                 for event in self._agent_runtime.run_stream(
                     user_message=user_message, conversation_id=conversation_id,
                     messages=messages, provider_name=provider_name,
                     model=model, prompt_id=prompt_id,
+                    extra_context=extra_context,
                 ):
                     if event["type"] == "done":
                         result = event["result"]
@@ -293,6 +322,10 @@ class FavaAI(FavaExtensionBase):
                             result, conversation_id, provider_name,
                             user_message, model,
                         )
+                        if file_ids and self._document_store:
+                            self._document_store.assign_conversation(
+                                file_ids, result["conversation_id"]
+                            )
                         payload = {
                             "type": "done",
                             "conversation_id": result["conversation_id"],
@@ -412,6 +445,13 @@ class FavaAI(FavaExtensionBase):
             provider_config = self._config_manager.get_provider_config()
             agent_config = self._config_manager.get_agent_config()
             knowledge_config = self._config_manager.get_knowledge_config()
+            tools_config = self._config_manager.get_tools_config()
+            documents_config = self._config_manager.get_documents_config()
+            safe_documents = dict(documents_config)
+            embedding = dict(safe_documents.get("embedding") or {})
+            if "api_key" in embedding:
+                embedding["api_key"] = "***" if embedding["api_key"] else ""
+            safe_documents["embedding"] = embedding
             safe_provider_config = {}
             for name, cfg in provider_config.items():
                 safe_cfg = dict(cfg)
@@ -420,7 +460,8 @@ class FavaAI(FavaExtensionBase):
                 safe_provider_config[name] = safe_cfg
             return jsonify({
                 "providers": safe_provider_config, "agent": agent_config,
-                "knowledge": knowledge_config,
+                "knowledge": knowledge_config, "tools": tools_config,
+                "documents": safe_documents,
                 "config_dir": str(self._config_manager.config_dir),
             })
         except Exception as e:
@@ -452,6 +493,19 @@ class FavaAI(FavaExtensionBase):
                         cfg["api_key"] = raw_key
                     else:
                         cfg.pop("api_key", None)
+
+        # Same for the optional document-embedding key.
+        documents = data.get("documents")
+        if isinstance(documents, dict):
+            embedding = documents.get("embedding")
+            if isinstance(embedding, dict) and embedding.get("api_key") == "***":
+                raw_docs = self._config_manager._raw_config.get("documents") or {}
+                raw_embedding = raw_docs.get("embedding") or {} if isinstance(raw_docs, dict) else {}
+                raw_key = raw_embedding.get("api_key") if isinstance(raw_embedding, dict) else None
+                if raw_key:
+                    embedding["api_key"] = raw_key
+                else:
+                    embedding.pop("api_key", None)
 
         config_path = self._config_manager.config_dir / "config.yaml"
         try:
@@ -550,6 +604,219 @@ class FavaAI(FavaExtensionBase):
                 "content": prompt.get("content"),
             })
         return jsonify(self._prompt_registry.list_prompts())
+
+    # ── documents ─────────────────────────────────────────────────
+
+    @property
+    def _documents_config(self) -> dict:
+        # Read live so config edits apply without a restart.
+        return self._config_manager.get_documents_config()
+
+    def _refresh_embedder(self):
+        from fava_ai.documents.embeddings import EmbeddingClient
+
+        if self._document_store is not None:
+            self._document_store.set_embedder(
+                EmbeddingClient.from_config(self._documents_config.get("embedding"))
+            )
+
+    def _configured_document_folders(self) -> list[str]:
+        """User-configured folders plus Fava's documents folder (no uploads)."""
+        folders = [
+            str(f) for f in self._documents_config.get("folders", []) if f
+        ]
+        try:
+            fava_documents = getattr(self.ledger.fava_options, "documents", None)
+            if fava_documents:
+                folders.append(str(Path(self.ledger_dir) / fava_documents))
+        except Exception:
+            logger.debug("Could not resolve Fava documents folder")
+        return self._dedupe(folders)
+
+    def _document_folders(self) -> list[str]:
+        """Every folder to scan, including the chat-upload directory."""
+        folders = list(self._configured_document_folders())
+        if self._document_store and self._document_store.documents_dir:
+            folders.append(str(self._document_store.documents_dir))
+        return self._dedupe(folders)
+
+    @staticmethod
+    def _dedupe(folders: list[str]) -> list[str]:
+        seen, unique = set(), []
+        for folder in folders:
+            if folder not in seen:
+                seen.add(folder)
+                unique.append(folder)
+        return unique
+
+    def _attachment_context(self, file_ids, conversation_id=None) -> str:
+        """System-prompt note describing attached documents for this turn.
+
+        Small documents are inlined; larger ones are referenced so the agent
+        can pull them with the ``read_document`` tool.
+        """
+        if not self._document_store:
+            return ""
+        ids = list(file_ids or [])
+        if not ids and conversation_id:
+            ids = [
+                d["id"] for d
+                in self._document_store.list_documents(conversation_id=conversation_id)
+            ]
+        if not ids:
+            return ""
+
+        lines = [
+            "## Attached documents",
+            "The user attached these files to the conversation:",
+        ]
+        for doc_id in ids[:10]:
+            doc = self._document_store.get(doc_id)
+            if not doc:
+                continue
+            line = f"- {doc['name']} (document_id: {doc_id}, status: {doc['status']})"
+            if doc["status"] == "indexed" and (doc.get("chars") or 0) <= 2000:
+                text = self._document_store.read(doc_id, max_chars=2000).get("text", "")
+                line += f"\n```\n{text}\n```"
+            elif doc["status"] == "indexed":
+                line += " — call read_document to read its contents"
+            else:
+                line += f" — {doc.get('error') or 'contents not readable'}"
+            lines.append(line)
+        lines.append("")
+        lines.append(
+            "Use these documents as context and cite the file name when you use one."
+        )
+        return "\n".join(lines)
+
+    @extension_endpoint("documents", methods=["GET"])
+    def api_documents(self):
+        if not self._document_store:
+            return jsonify({"enabled": False})
+        doc_id = request.args.get("id")
+        if doc_id:
+            doc = self._document_store.read(doc_id)
+            if not doc:
+                return jsonify({"error": "Not found"}), 404
+            return jsonify(doc)
+        conversation_id = request.args.get("conversation_id")
+        if conversation_id:
+            return jsonify(self._document_store.list_documents(conversation_id=conversation_id))
+        if request.args.get("all"):
+            limit = request.args.get("limit", type=int) or 200
+            return jsonify(self._document_store.list_documents(limit=limit))
+        status = self._document_store.status()
+        status["enabled"] = bool(self._documents_config.get("enabled", False))
+        status["folders"] = self._document_folders()
+        status["embedding_configured"] = bool(
+            (self._documents_config.get("embedding") or {}).get("base_url")
+        )
+        return jsonify(status)
+
+    @extension_endpoint("documents_upload", methods=["POST"])
+    def api_documents_upload(self):
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        if "file" not in request.files:
+            return jsonify({"error": "file is required"}), 400
+
+        upload = request.files["file"]
+        from werkzeug.utils import secure_filename
+
+        name = secure_filename(upload.filename or "")
+        if not name:
+            return jsonify({"error": "A filename is required"}), 400
+
+        max_bytes = int(self._documents_config.get("max_file_mb", 25)) * 1024 * 1024
+        if request.content_length and request.content_length > max_bytes + 4096:
+            return jsonify({
+                "error": f"File exceeds the {self._documents_config.get('max_file_mb', 25)} MB limit"
+            }), 413
+
+        conversation_id = request.form.get("conversation_id") or None
+        target_dir = self._document_store.documents_dir / (
+            conversation_id or "uploads"
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / name
+        upload.save(target)
+
+        try:
+            doc = self._document_store.import_path(
+                target,
+                conversation_id=conversation_id,
+                max_pages=int(self._documents_config.get("max_pages", 50)),
+                max_chars=int(self._documents_config.get("max_chars_per_doc", 200000)),
+            )
+        except Exception as e:
+            logger.exception("Document upload failed")
+            return jsonify({"error": str(e)}), 500
+
+        doc["url"] = f"documents?id={doc['id']}"
+        return jsonify(doc), 201
+
+    @extension_endpoint("documents_index", methods=["POST"])
+    def api_documents_index(self):
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        if not self._configured_document_folders():
+            return jsonify({
+                "error": "No document folders configured",
+                "hint": "Set documents.folders or Fava's documents folder option",
+            }), 400
+        folders = self._document_folders()
+        try:
+            self._refresh_embedder()
+            stats = self._document_store.scan_folders(
+                folders,
+                max_files=2000,
+            )
+            stats["embedding"] = self._document_store.embed_pending()
+        except Exception as e:
+            logger.exception("Document indexing failed")
+            return jsonify({"error": str(e)}), 500
+        stats["folders"] = folders
+        stats["status"] = self._document_store.status()
+        return jsonify(stats)
+
+    @extension_endpoint("documents_embed", methods=["POST"])
+    def api_documents_embed(self):
+        """Embed any chunks that are missing vectors (and report status)."""
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        self._refresh_embedder()
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        if not self._document_store.embedder or not self._document_store.embedder.configured:
+            return jsonify({
+                "error": "Embedding not configured",
+                "hint": "Set documents.embedding.base_url and .model",
+            }), 400
+        result = self._document_store.embed_pending(
+            max_chunks=request.args.get("limit", type=int) or 2000
+        )
+        result["status"] = self._document_store.embedding_status()
+        return jsonify(result)
+
+    @extension_endpoint("documents_embed_test", methods=["POST"])
+    def api_documents_embed_test(self):
+        embedder = self._document_store.embedder if self._document_store else None
+        if not embedder or not embedder.configured:
+            return jsonify({"connected": False, "error": "Embedding not configured"})
+        connected, detail = embedder.test_connection()
+        return jsonify({"connected": connected, "detail": detail})
+
+    @extension_endpoint("documents", methods=["DELETE"])
+    def api_documents_delete(self):
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        doc_id = request.args.get("id")
+        if not doc_id:
+            return jsonify({"error": "?id= required"}), 400
+        remove_file = request.args.get("remove_file") in ("1", "true", "yes")
+        if not self._document_store.delete(doc_id, remove_file=remove_file):
+            return jsonify({"error": "Not found"}), 404
+        return jsonify({"deleted": True, "removed_file": remove_file})
 
     @extension_endpoint("traces", methods=["GET"])
     def api_traces(self):
