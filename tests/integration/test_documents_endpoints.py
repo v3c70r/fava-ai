@@ -8,7 +8,7 @@ import yaml
 from tests.integration.conftest import StubRuntime, make_result
 
 
-def _upload(client, name=b"receipt.txt", content=b"CAFE MILANO\n2024-03-05\nTotal 13.50 CAD",
+def _upload(client, name="receipt.txt", content=b"CAFE MILANO\n2024-03-05\nTotal 13.50 CAD",
             conversation_id=None):
     data = {"file": (io.BytesIO(content), name)}
     if conversation_id:
@@ -19,7 +19,7 @@ def _upload(client, name=b"receipt.txt", content=b"CAFE MILANO\n2024-03-05\nTota
 
 
 def test_upload_get_list_delete(client, ext):
-    resp = _upload(client, b"receipt.txt")
+    resp = _upload(client, "receipt.txt")
     assert resp.status_code == 201
     doc = resp.get_json()
     assert doc["name"] == "receipt.txt"
@@ -35,6 +35,17 @@ def test_upload_get_list_delete(client, ext):
 
     assert client.delete(f"/documents?id={doc_id}").status_code == 200
     assert client.get(f"/documents?id={doc_id}").status_code == 404
+
+
+def test_upload_tolerates_bytes_filename(client, ext):
+    """Some clients send a bytes filename; it must not crash (py3.10 Werkzeug)."""
+    resp = client.post(
+        "/documents_upload",
+        data={"file": (io.BytesIO(b"bytes name content"), b"from-bytes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 201
+    assert resp.get_json()["name"].endswith("from-bytes.txt")
 
 
 def test_upload_requires_file(client, ext):
@@ -97,7 +108,7 @@ def test_config_masks_embedding_api_key(client, ext, tmp_path):
 
 
 def test_chat_passes_attachment_context_and_associates(client, ext):
-    doc = _upload(client, b"invoice.txt", b"Invoice 1234 from Example Corp").get_json()
+    doc = _upload(client, "invoice.txt", b"Invoice 1234 from Example Corp").get_json()
 
     stub = StubRuntime(make_result(conversation_id="conv-docs"))
     ext._agent_runtime = stub
@@ -127,7 +138,7 @@ def test_chat_without_attachments_has_no_extra_context(client, ext):
 def test_attachment_context_follows_conversation(client, ext):
     """A follow-up without file_ids still sees the conversation's documents."""
     doc = _upload(
-        client, b"statement.txt", b"Credit card statement", conversation_id="conv-1"
+        client, "statement.txt", b"Credit card statement", conversation_id="conv-1"
     ).get_json()
 
     stub = StubRuntime(make_result(conversation_id="conv-1"))

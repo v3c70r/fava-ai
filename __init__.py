@@ -723,7 +723,10 @@ class FavaAI(FavaExtensionBase):
         upload = request.files["file"]
         from werkzeug.utils import secure_filename
 
-        name = secure_filename(upload.filename or "")
+        raw_name = upload.filename or ""
+        if isinstance(raw_name, bytes):  # some clients send a bytes filename
+            raw_name = raw_name.decode("utf-8", "replace")
+        name = secure_filename(raw_name)
         if not name:
             return jsonify({"error": "A filename is required"}), 400
 
