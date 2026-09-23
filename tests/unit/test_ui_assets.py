@@ -83,9 +83,10 @@ def test_tool_activity_styles_exist():
 def test_js_element_ids_exist_in_template():
     """Every element the JS looks up (except dynamically built ones) exists."""
     ids = set(re.findall(r"getElementById\('([^']+)'\)", JS))
+    dynamic = ("cfg-", "docs-")  # built at runtime in the panel HTML
     missing = [
         i for i in ids
-        if not i.startswith("cfg-") and f'id="{i}"' not in HTML
+        if not i.startswith(dynamic) and f'id="{i}"' not in HTML
     ]
     assert missing == [], missing
 
@@ -110,3 +111,16 @@ def test_fava_details_styles_are_reset():
     assert "padding: .25em .5em .25em 30px" in HTML
     # Drop Fava's `details { min-width: 400px }` so the block fits the panel.
     assert "min-width: 0" in HTML
+
+
+# ── documents (#20, #21) ──────────────────────────────────────────
+
+
+def test_document_upload_ui_is_wired():
+    for element in ("attach-btn", "file-input", "attachment-chips", "panel-documents"):
+        assert f'id="{element}"' in HTML, element
+    for fn in ("uploadFiles", "renderAttachments", "loadDocuments", "embedDocuments"):
+        assert fn in JS, fn
+    assert "documents_upload" in JS
+    assert "documents?conversation_id=" not in JS  # no hardcoded URL string
+    assert "file_ids" in JS
