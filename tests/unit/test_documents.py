@@ -152,6 +152,13 @@ def test_sanitize_filename_strips_paths():
     assert "/" not in sanitize_filename("a/b/c.pdf")
 
 
+def test_sanitize_filename_accepts_bytes():
+    # Some HTTP clients send a bytes filename; it must not crash.
+    assert sanitize_filename(b"from-bytes.txt") == "from-bytes.txt"
+    assert sanitize_filename(b"../../evil.pdf") == "evil.pdf"
+    assert sanitize_filename("") == "document"
+
+
 def test_store_indexes_and_searches(store, docs_dir):
     stats = store.scan_folders([docs_dir])
     assert stats["indexed"] == 4

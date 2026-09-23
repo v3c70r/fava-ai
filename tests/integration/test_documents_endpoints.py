@@ -37,17 +37,6 @@ def test_upload_get_list_delete(client, ext):
     assert client.get(f"/documents?id={doc_id}").status_code == 404
 
 
-def test_upload_tolerates_bytes_filename(client, ext):
-    """Some clients send a bytes filename; it must not crash (py3.10 Werkzeug)."""
-    resp = client.post(
-        "/documents_upload",
-        data={"file": (io.BytesIO(b"bytes name content"), b"from-bytes.txt")},
-        content_type="multipart/form-data",
-    )
-    assert resp.status_code == 201
-    assert resp.get_json()["name"].endswith("from-bytes.txt")
-
-
 def test_upload_requires_file(client, ext):
     resp = client.post("/documents_upload", data={}, content_type="multipart/form-data")
     assert resp.status_code == 400

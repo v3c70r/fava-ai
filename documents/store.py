@@ -93,9 +93,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def sanitize_filename(name: str) -> str:
-    """Strip directory components and unsafe characters from an upload name."""
-    name = Path(name).name.strip() or "document"
+def sanitize_filename(name: str | bytes) -> str:
+    """Strip directory components and unsafe characters from an upload name.
+
+    Accepts bytes because some HTTP clients send a bytes filename.
+    """
+    if isinstance(name, bytes):
+        name = name.decode("utf-8", "replace")
+    name = Path(str(name)).name.strip() or "document"
     name = re.sub(r"[^\w.\- ]+", "_", name, flags=re.UNICODE)
     return name[:120] or "document"
 
