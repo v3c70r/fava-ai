@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fava_ai.documents.store import query_terms
 from fava_ai.tools.base import BaseTool, ToolResult
 
 
@@ -40,8 +41,9 @@ class SearchDocumentsTool(BaseTool):
             "Full-text search over the user's documents and vouchers (receipts, "
             "statements, contracts, payslips) that were indexed from their "
             "document folders or uploaded in chat. Returns matching documents "
-            "with a highlighted snippet, page number and document_id. Use "
-            "`read_document` to read more of a hit."
+            "with a highlighted snippet, page number, relevance score and "
+            "document_id, best match first. Use `read_document` to read more "
+            "of a hit."
         )
 
     @property
@@ -60,6 +62,15 @@ class SearchDocumentsTool(BaseTool):
 
     def execute(self, query: str, limit: int = 0) -> ToolResult:
         limit = limit or self._default_limit
+        if not query_terms(query):
+            # A punctuation-only query has no indexable terms; say so instead
+            # of returning an empty result set that looks like "no matches".
+            message = "The query contains no searchable words."
+            return ToolResult(
+                content=json.dumps({"results": [], "count": 0,
+                                    "message": message}),
+                metadata={"count": 0, "message": message},
+            )
         try:
             results = self._store.search(query, limit=max(1, int(limit)))
         except Exception as e:  # noqa: BLE001

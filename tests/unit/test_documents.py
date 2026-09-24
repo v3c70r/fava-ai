@@ -6,12 +6,21 @@ from pathlib import Path
 import pytest
 from fava_ai.documents.chunking import chunk_pages, chunk_text
 from fava_ai.documents.extract import (
+    STATUS_EMPTY,
     STATUS_ERROR,
     STATUS_INDEXED,
     STATUS_UNSUPPORTED,
+    Extracted,
     extract_text,
+    has_pdf_support,
 )
-from fava_ai.documents.store import DocumentStore, sanitize_filename
+from fava_ai.documents.store import (
+    DocumentStore,
+    _fts_query,
+    query_terms,
+    sanitize_filename,
+    segment_cjk,
+)
 from fava_ai.tools.builtin.documents import (
     FileDocumentTool,
     ReadDocumentTool,
@@ -483,3 +492,242 @@ def test_read_document_coerces_string_chunk(store, docs_dir):
     as_int = json.loads(tool.execute(document_id=doc["id"], chunk=0).content)
     assert as_string["text"] == as_int["text"]
     assert as_string["text"]
+
+
+# ── CJK / tokenization (review finding 2.3) ───────────────────────
+
+
+def test_segment_cjk_splits_only_cjk_runs():
+    assert segment_cjk("记账软件测试") == " 记 账 软 件 测 试 "
+    # Latin words stay whole, mixed text keeps both searchable.
+    assert "CAFE" in segment_cjk("CAFE 记账") and "记 账" in segment_cjk("CAFE 记账")
+    assert segment_cjk("plain english") == "plain english"
+    assert segment_cjk("") == ""
+
+
+def test_query_terms_keep_single_character_cjk():
+    # `记` is a legitimate one-character query; latin single chars are noise.
+    assert query_terms("记") == ["记"]
+    assert query_terms("a") == []
+    assert query_terms("记账 receipt") == ["记账", "receipt"]
+    # Punctuation only -> nothing searchable.
+    assert query_terms("***") == []
+    assert _fts_query("***") is None
+
+
+def test_fts_query_uses_a_phrase_for_cjk_runs():
+    # A CJK run becomes a single-char phrase so precision is kept.
+    assert _fts_query("记账") == '"记 账"'
+    assert _fts_query("记账 receipt") == '"记 账" OR "receipt"'
+
+
+def test_search_finds_unspaced_chinese(store, tmp_path):
+    """unicode61 cannot segment CJK, so `记账` used to return nothing."""
+    path = tmp_path / "ledger-notes.txt"
+    path.write_text("记账软件测试记录：本月支出与收入明细")
+    store.import_path(path)
+
+    for query in ("记账", "支出", "记"):
+        hits = store.search(query, mode="bm25")
+        assert hits, f"no hit for {query!r}"
+
+    hit = store.search("记账", mode="bm25")[0]
+    # The snippet must show the raw text, not the spaced index copy.
+    assert "记账" in hit["snippet"]
+    assert "记 账" not in hit["snippet"]
+
+
+# ── extraction status & self-healing (review finding 1.3) ─────────
+
+
+def test_empty_file_is_flagged_not_indexed(tmp_path):
+    path = tmp_path / "empty.txt"
+    path.write_text("")
+    assert extract_text(path).status == STATUS_EMPTY
+
+
+def test_pdf_without_text_layer_is_flagged(tmp_path):
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(make_pdf(""))
+    result = extract_text(path)
+    assert result.status == STATUS_EMPTY
+    assert "scanned" in (result.error or "").lower()
+
+
+def test_has_pdf_support_matches_the_environment():
+    import importlib.util
+
+    assert has_pdf_support() is (
+        importlib.util.find_spec("pypdf") is not None
+    )
+
+
+def test_failed_extraction_is_retried_on_reimport(store, tmp_path, monkeypatch):
+    """A doc that failed once must recover once the extractor works again."""
+    from fava_ai.documents import store as store_module
+
+    path = tmp_path / "invoice.pdf"
+    path.write_bytes(make_pdf("Invoice 42"))
+
+    real = store_module.extract_text
+    monkeypatch.setattr(
+        store_module, "extract_text",
+        lambda *a, **k: Extracted(
+            kind="pdf", status=STATUS_UNSUPPORTED, error="no pypdf"
+        ),
+    )
+    first = store.import_path(path)
+    assert first["status"] == STATUS_UNSUPPORTED
+    assert store.search("Invoice", mode="bm25") == []
+
+    # Re-importing the identical file must re-extract, not return the cache.
+    monkeypatch.setattr(store_module, "extract_text", real)
+    second = store.import_path(path)
+    assert second["status"] == STATUS_INDEXED
+    assert store.search("Invoice", mode="bm25")
+
+
+def test_scan_folders_does_not_reextract_failures(store, docs_dir):
+    """Scans skip unchanged files; healing is retry_failed's job."""
+    first = store.scan_folders([docs_dir])
+    assert first["scanned"] == 4
+    again = store.scan_folders([docs_dir])
+    assert again["indexed"] == 0
+    assert again["skipped"] == first["scanned"]
+
+
+def test_retry_failed_recovers_documents(store, tmp_path, monkeypatch):
+    from fava_ai.documents import store as store_module
+
+    path = tmp_path / "statement.pdf"
+    path.write_bytes(make_pdf("Statement closing balance"))
+
+    real = store_module.extract_text
+    monkeypatch.setattr(
+        store_module, "extract_text",
+        lambda *a, **k: Extracted(
+            kind="pdf", status=STATUS_UNSUPPORTED, error="no pypdf"
+        ),
+    )
+    doc = store.import_path(path)
+    assert doc["status"] == STATUS_UNSUPPORTED
+
+    # A retry while the extractor is still broken changes nothing.
+    retry = store.retry_failed()
+    assert retry["retried"] == 1 and retry["indexed"] == 0
+    assert retry["still_failed"] == 1 and retry["errors"]
+
+    monkeypatch.setattr(store_module, "extract_text", real)
+    retry = store.retry_failed()
+    assert retry["retried"] == 1 and retry["indexed"] == 1
+    assert retry["still_failed"] == 0
+    assert store.search("closing balance", mode="bm25")
+
+
+def test_retry_failed_skips_deleted_files(store, tmp_path):
+    path = tmp_path / "gone.pdf"
+    path.write_bytes(make_pdf("temporary"))
+    store.import_path(path)
+    path.unlink()
+    retry = store.retry_failed()
+    assert retry["retried"] == 0  # nothing failed, so nothing to retry
+
+
+# ── lifecycle (#2.2) ──────────────────────────────────────────────
+
+
+def test_delete_conversation_removes_rows_and_files(store, tmp_path):
+    conv = "conv-cleanup"
+    uploads = store.documents_dir / conv  # the upload convention
+    for name in ("a.txt", "b.txt"):
+        source = tmp_path / name
+        source.write_text(f"content of {name}")
+        store.import_path(source, conversation_id=conv, dest_dir=uploads)
+
+    assert sorted(p.name for p in uploads.iterdir()) == ["a.txt", "b.txt"]
+    assert len(store.list_documents(conversation_id=conv)) == 2
+
+    result = store.delete_conversation(conv)
+    assert result["documents"] == 2
+    assert store.list_documents(conversation_id=conv) == []
+    # The upload directory is named after the conversation id.
+    assert not uploads.exists()
+    assert store.search("content", mode="bm25") == []
+
+
+def test_delete_conversation_keeps_other_conversations(store, tmp_path):
+    for conv in ("keep", "drop"):
+        source = tmp_path / f"{conv}.txt"
+        source.write_text(f"unique-{conv}")
+        store.import_path(
+            source, conversation_id=conv, dest_dir=store.documents_dir / conv
+        )
+
+    store.delete_conversation("drop")
+    remaining = store.list_documents()
+    assert [d["conversation_id"] for d in remaining] == ["keep"]
+
+
+def test_delete_conversation_ignores_unsafe_ids(store, tmp_path):
+    store.documents_dir.mkdir(parents=True, exist_ok=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "important.txt").write_text("do not delete me")
+    # A traversal-looking id must never remove an unrelated directory.
+    store.delete_conversation("../victim")
+    assert (victim / "important.txt").exists()
+
+
+# ── index migration (CJK) ─────────────────────────────────────────
+
+
+def test_index_migration_reesegments_existing_chunks(tmp_path):
+    db = tmp_path / "documents.db"
+    source = tmp_path / "notes.txt"
+    source.write_text("记账软件测试记录")
+
+    first = DocumentStore(db, tmp_path / "documents")
+    first.initialize()
+    first.import_path(source)
+    # Simulate an index written by the previous version (no CJK splitting).
+    first.conn.execute("UPDATE chunks_fts SET text = ?", ("记账软件测试记录",))
+    first.conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    first.conn.commit()
+    assert first.search("记账", mode="bm25") == []  # the reported bug
+    first.close()
+
+    reopened = DocumentStore(db, tmp_path / "documents")
+    reopened.initialize()  # must migrate the index in place
+    assert reopened.search("记账", mode="bm25")
+    version = reopened.conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()["value"]
+    assert version == "2"
+    reopened.close()
+
+
+def test_initialize_is_idempotent(store, docs_dir):
+    store.scan_folders([docs_dir])
+    before = len(store.search("rent", mode="bm25"))
+    store.initialize()  # must not duplicate or drop index rows
+    assert len(store.search("rent", mode="bm25")) == before
+
+
+# ── relevance scores (#2.4) ───────────────────────────────────────
+
+
+def test_search_results_carry_a_score(store, docs_dir):
+    store.scan_folders([docs_dir])
+    hits = store.search("rent", mode="bm25")
+    assert hits
+    assert all(isinstance(h["score"], float) for h in hits)
+    scores = [h["score"] for h in hits]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_punctuation_only_query_is_reported(store, docs_dir):
+    store.scan_folders([docs_dir])
+    result = SearchDocumentsTool(store).execute(query="***")
+    payload = json.loads(result.content)
+    assert payload["results"] == []
+    assert "no searchable words" in payload["message"]

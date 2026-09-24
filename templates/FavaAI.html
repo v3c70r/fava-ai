@@ -38,7 +38,7 @@
     <div class="fava-ai-input-area">
       <div id="attachment-chips" class="attachment-chips"></div>
       <div class="fava-ai-input-row">
-        <button id="attach-btn" class="btn btn-sm" title="Attach documents">\U0001f4ce</button>
+        <button id="attach-btn" class="btn btn-sm" title="Attach documents">&#x1F4CE;</button>
         <input id="file-input" type="file" multiple style="display:none;">
         <textarea id="chat-input" placeholder="Ask about your ledger..." rows="2"></textarea>
         <button id="stop-btn" class="btn btn-sm" style="display:none;">Stop</button>
@@ -519,6 +519,17 @@
 .config-status { margin-top: 6px; font-size: 12px; }
 .config-status.ok { color: var(--diff-green, #35973d); }
 .config-status.err { color: var(--diff-red, #973535); }
+.doc-warning {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--diff-red, #973535);
+}
+.doc-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-color-lightest, #666);
+  overflow-wrap: anywhere;
+}
 .config-hint {
   margin-top: 10px;
   font-size: 11px;

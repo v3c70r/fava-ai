@@ -25,8 +25,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry (transaction with `attachment:` metadata + a `Document` entry). Appending it to
   a dedicated file is opt-in via `tools.allow_ledger_writes` / `tools.ledger_writes_file`.
 - New endpoints: `GET`/`DELETE /documents`, `POST /documents_upload`,
-  `POST /documents_index`, `POST /documents_embed`, `POST /documents_embed_test`.
-- `pypdf` dependency for PDF text extraction (PDFs flag as unsupported if absent).
+  `POST /documents_index`, `POST /documents_retry`, `POST /documents_embed`,
+  `POST /documents_embed_test`.
+- `pypdf` dependency for PDF text extraction (PDFs flag as unsupported if absent,
+  and the Docs panel says so).
+- The **Config** panel now edits `documents.enabled` and the
+  `documents.embedding.*` endpoint (base_url / model / api_key) instead of leaving
+  semantic search to hand-written YAML.
+
+### Fixed
+- **Fava's `documents` folder option was silently ignored.** Beancount parses it as a
+  list, and joining a `Path` with a list raised a `TypeError` that a broad `except`
+  swallowed — so the folder vanished and `POST /documents_index` answered "no folders
+  configured" for a ledger that plainly configured one.
+- **Failed extractions never recovered.** A file recorded as `unsupported`/`error` was
+  returned from cache on re-import (matching `sha256` short-circuited extraction), so a
+  PDF first seen without `pypdf` stayed unusable. Re-importing now re-extracts, and
+  `POST /documents_retry` / *Retry failed* heals existing rows.
+- **CJK keyword search returned nothing.** FTS5's `unicode61` tokenizer treats an
+  unspaced run of Chinese/Japanese as a single token, so `记账` could not match
+  `记账软件测试`. CJK characters are now indexed per character and CJK queries run as a
+  phrase; single-character CJK queries work too. Existing indexes migrate on startup.
+- **Uploaded files were orphaned when a conversation was deleted.** They are now removed
+  with the conversation (rows and files).
+- **The attach button rendered the literal text `\U0001f4ce`** — a Python escape pasted
+  into a Jinja2 template, which does not interpret it.
+- **The embedding *Test* button showed "unknown error"** for every failure: the panel
+  read `error` while the endpoint returned `detail`.
+- **An empty extraction was reported as `indexed`**, hiding scanned PDFs; it is now
+  `empty` with an explanation.
+- `PUT /config` rejected the `config_dir` key that `GET /config` returns, so a
+  round-tripped config failed validation.
+- Punctuation-only searches now say so instead of looking like "no matches"; search
+  results expose a relevance `score`.
 
 ### Changed
 - **Configuration is now primarily the beancount directive.** The `fava-extension`

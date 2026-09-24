@@ -418,7 +418,16 @@ class FavaAI(FavaExtensionBase):
         if not existing:
             return jsonify({"error": "Not found"}), 404
         delete_conv(self._db, conv_id)
-        return jsonify({"deleted": True})
+        # The conversation's uploads live in their own directory and would
+        # otherwise be orphaned (rows with a dangling conversation_id).
+        documents = {"documents": 0, "removed_dir": None}
+        if self._document_store is not None:
+            try:
+                documents = self._document_store.delete_conversation(conv_id)
+            except Exception:
+                logger.exception("Could not clean up documents for %s", conv_id)
+        payload = {"deleted": True, "documents": documents}
+        return jsonify(payload)
 
     @extension_endpoint("tools", methods=["GET"])
     def api_tools(self):
@@ -475,6 +484,11 @@ class FavaAI(FavaExtensionBase):
             return jsonify({"error": "Expected a JSON object"}), 400
 
         from fava_ai.config import validate_config
+        # `config_dir` is read-only and only reported by GET; ignore it here so
+        # that a round-tripped document does not fail validation.
+        data = {k: v for k, v in data.items() if k != "config_dir"}
+        if not data:
+            return jsonify({"error": "Expected a JSON object"}), 400
         errors = validate_config(data)
         if errors:
             return jsonify({"error": "Invalid config", "details": errors}), 400
@@ -627,10 +641,24 @@ class FavaAI(FavaExtensionBase):
         ]
         try:
             fava_documents = getattr(self.ledger.fava_options, "documents", None)
-            if fava_documents:
-                folders.append(str(Path(self.ledger_dir) / fava_documents))
+            # Beancount parses `option "documents" "documents"` as a LIST, and
+            # the option is repeatable, so handle both shapes. Treating it as a
+            # plain string raised a TypeError that was silently swallowed,
+            # which dropped the folder and made indexing claim there was none.
+            if isinstance(fava_documents, (list, tuple)):
+                candidates = [d for d in fava_documents if d]
+            elif fava_documents:
+                candidates = [fava_documents]
+            else:
+                candidates = []
+            for candidate in candidates:
+                folders.append(str(Path(self.ledger_dir) / str(candidate)))
         except Exception:
-            logger.debug("Could not resolve Fava documents folder")
+            logger.warning(
+                "Could not resolve Fava's documents folder; indexing only the "
+                "configured folders",
+                exc_info=True,
+            )
         return self._dedupe(folders)
 
     def _document_folders(self) -> list[str]:
@@ -707,10 +735,17 @@ class FavaAI(FavaExtensionBase):
             return jsonify(self._document_store.list_documents(limit=limit))
         status = self._document_store.status()
         status["enabled"] = bool(self._documents_config.get("enabled", False))
-        status["folders"] = self._document_folders()
+        # `folders` is what the user asked for, and it is what the index
+        # endpoint requires; the chat-upload directory is reported separately
+        # so the panel never advertises a folder the indexer would reject.
+        status["folders"] = self._configured_document_folders()
+        status["scan_folders"] = self._document_folders()
         status["embedding_configured"] = bool(
             (self._documents_config.get("embedding") or {}).get("base_url")
         )
+        from fava_ai.documents.extract import has_pdf_support
+
+        status["pdf_support"] = has_pdf_support()
         return jsonify(status)
 
     @extension_endpoint("documents_upload", methods=["POST"])
@@ -771,6 +806,9 @@ class FavaAI(FavaExtensionBase):
                 folders,
                 max_files=2000,
             )
+            # A file that failed earlier (missing pypdf, scanned PDF) is worth
+            # another attempt now that an index run is happening.
+            stats["retry"] = self._document_store.retry_failed()
             stats["embedding"] = self._document_store.embed_pending()
         except Exception as e:
             logger.exception("Document indexing failed")
@@ -798,13 +836,32 @@ class FavaAI(FavaExtensionBase):
         result["status"] = self._document_store.embedding_status()
         return jsonify(result)
 
+    @extension_endpoint("documents_retry", methods=["POST"])
+    def api_documents_retry(self):
+        """Re-extract documents that previously failed or had no text."""
+        if not self._document_store:
+            return jsonify({"error": "Documents are not available"}), 500
+        result = self._document_store.retry_failed(
+            max_docs=request.args.get("limit", type=int) or 200
+        )
+        result["status"] = self._document_store.status()
+        return jsonify(result)
+
     @extension_endpoint("documents_embed_test", methods=["POST"])
     def api_documents_embed_test(self):
         embedder = self._document_store.embedder if self._document_store else None
         if not embedder or not embedder.configured:
-            return jsonify({"connected": False, "error": "Embedding not configured"})
+            # `error` is what the UI reads; `detail` stays for API consumers.
+            return jsonify({
+                "connected": False,
+                "error": "Embedding not configured",
+                "detail": "Embedding not configured",
+            })
         connected, detail = embedder.test_connection()
-        return jsonify({"connected": connected, "detail": detail})
+        payload = {"connected": connected, "detail": detail}
+        if not connected:
+            payload["error"] = detail
+        return jsonify(payload)
 
     @extension_endpoint("documents", methods=["DELETE"])
     def api_documents_delete(self):

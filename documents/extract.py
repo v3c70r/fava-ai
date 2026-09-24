@@ -25,6 +25,18 @@ PDF_SUFFIXES = {".pdf"}
 STATUS_INDEXED = "indexed"
 STATUS_UNSUPPORTED = "unsupported"
 STATUS_ERROR = "error"
+#: Extraction worked but produced nothing usable (scanned PDF, empty file).
+#: Distinct from ``indexed`` so it is visible in the UI and gets retried later.
+STATUS_EMPTY = "empty"
+
+
+def has_pdf_support() -> bool:
+    """Whether ``pypdf`` is importable in this interpreter."""
+    try:
+        import pypdf  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 @dataclass
@@ -45,7 +57,7 @@ def extract_text(path: Path, *, max_pages: int = 50, max_chars: int = 200_000) -
     if suffix in PDF_SUFFIXES:
         return _extract_pdf(path, max_pages=max_pages, max_chars=max_chars)
     if suffix in TEXT_SUFFIXES:
-        return _extract_plain(path, max_chars=max_chars)
+        return _empty_if_blank(_extract_plain(path, max_chars=max_chars))
     if suffix in IMAGE_SUFFIXES:
         return Extracted(
             kind="image", status=STATUS_UNSUPPORTED,
@@ -63,6 +75,16 @@ def _extract_plain(path: Path, *, max_chars: int) -> Extracted:
     except OSError as e:
         return Extracted(kind="text", status=STATUS_ERROR, error=str(e))
     return Extracted(kind="text", text=text[:max_chars], pages=None)
+
+
+def _empty_if_blank(
+    extracted: Extracted, *, hint: str = "empty file or scanned image"
+) -> Extracted:
+    """Flag a successful but empty extraction instead of calling it indexed."""
+    if extracted.status == STATUS_INDEXED and not extracted.text.strip():
+        extracted.status = STATUS_EMPTY
+        extracted.error = f"no extractable text ({hint})"
+    return extracted
 
 
 def _extract_pdf(path: Path, *, max_pages: int, max_chars: int) -> Extracted:
@@ -93,9 +115,12 @@ def _extract_pdf(path: Path, *, max_pages: int, max_chars: int) -> Extracted:
     except Exception as e:  # noqa: BLE001 - malformed PDFs
         return Extracted(kind="pdf", status=STATUS_ERROR, error=str(e))
 
-    return Extracted(
-        kind="pdf",
-        text="\n\n".join(page_texts)[:max_chars],
-        pages=total_pages,
-        page_texts=page_texts,
+    return _empty_if_blank(
+        Extracted(
+            kind="pdf",
+            text="\n\n".join(page_texts)[:max_chars],
+            pages=total_pages,
+            page_texts=page_texts,
+        ),
+        hint="scanned PDF without a text layer? OCR is not configured",
     )
