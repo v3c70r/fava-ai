@@ -262,7 +262,20 @@ documents:
 
 The **Docs** tab shows the index status and has an *Index now* button (also
 `POST /documents_index`). Fava's own `documents` folder option is included
-automatically. Indexing is incremental — content-hashed files are skipped.
+automatically (both as a single value and as the list beancount actually parses
+it into). Indexing is incremental — content-hashed files are skipped.
+
+The panel also lists everything it could not use, and *Retry failed*
+(`POST /documents_retry`) re-extracts those documents in place. That matters for
+PDFs: if `pypdf` was missing when a file was first seen, the file is recorded as
+*unsupported* and would otherwise stay unusable forever. Installing `pypdf` and
+retrying heals it without re-uploading. A scanned PDF with no text layer is
+recorded as *empty* rather than *indexed*, so it is visible instead of looking
+like a successful import.
+
+> Keyword search splits CJK text per character (FTS5's `unicode61` tokenizer
+does not segment Chinese/Japanese), so `记账` finds an unspaced `记账软件测试`.
+> Upgrading from an earlier build rebuilds the index once, automatically.
 
 ### Optional: semantic search
 
@@ -279,7 +292,14 @@ documents:
 ```
 
 Use *Embed now* in the Docs tab (or `POST /documents_embed`). A *Test* button
-calls a one-token `/embeddings` request to verify the endpoint.
+calls a one-token `/embeddings` request to verify the endpoint; on failure it
+reports the endpoint's actual error. The same fields are editable in the
+**Config** tab (`documents.embedding.*`), so nothing has to be hand-written in
+YAML.
+
+Search results carry a `score` (BM25-negated in keyword mode, cosine in dense
+mode, the fused score in hybrid mode) so the agent can tell a strong match from
+a weak one.
 
 > The endpoint must actually serve embeddings: llama.cpp needs `--embeddings`
 > (and many models are loaded without it), Ollama and OpenAI work as-is.

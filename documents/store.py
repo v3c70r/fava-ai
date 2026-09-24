@@ -28,6 +28,11 @@ from fava_ai.documents.extract import (
 
 logger = logging.getLogger(__name__)
 
+#: Bump when the FTS index layout changes, so initialize() can rebuild it.
+#: 2 = CJK characters are space-separated in the index (unicode61 cannot
+#: segment CJK on its own, which silently broke Chinese/Japanese search).
+SCHEMA_VERSION = 2
+
 #: Suffixes the folder scanner will consider (extraction may still decline).
 SCAN_SUFFIXES = {
     ".pdf", ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".log",
@@ -76,9 +81,39 @@ CREATE TABLE IF NOT EXISTS chunk_vectors (
     dim      INTEGER NOT NULL,
     vector   BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+
+#: Han, Hiragana, Katakana, Hangul and CJK compatibility ideographs. FTS5's
+#: unicode61 tokenizer treats a run of these as ONE token, so "记账软件测试"
+#: is unsearchable as "记账" unless we split the characters ourselves.
+_CJK_CLASS = (
+    r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
+)
+_CJK_RE = re.compile(f"[{_CJK_CLASS}]")
+_CJK_RUN_RE = re.compile(f"[{_CJK_CLASS}]+")
+#: Splits a query into (CJK run, other) pairs.
+_QUERY_SPLIT_RE = re.compile(f"([{_CJK_CLASS}]+)|([^{_CJK_CLASS}]+)")
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
+
+def segment_cjk(text: str) -> str:
+    """Space-separate CJK characters so unicode61 tokenizes each one.
+
+    Applied to indexed text only; stored chunk text stays verbatim.
+    """
+    if not text or not _CJK_RE.search(text):
+        return text
+    return _CJK_RUN_RE.sub(lambda m: " " + " ".join(m.group()) + " ", text)
 
 
 def _now() -> str:
@@ -105,15 +140,32 @@ def sanitize_filename(name: str | bytes) -> str:
     return name[:120] or "document"
 
 
-def _terms(query: str) -> list[str]:
-    return [t.lower() for t in _WORD_RE.findall(query or "") if len(t) > 1]
+def query_terms(query: str) -> list[str]:
+    """Terms worth highlighting, in their original form.
+
+    Single-character CJK terms are kept (``记`` is a legitimate query).
+    """
+    return [
+        t.lower() for t in _WORD_RE.findall(query or "")
+        if len(t) > 1 or _has_cjk(t)
+    ]
 
 
 def _fts_query(query: str) -> str | None:
-    terms = _terms(query)[:12]
-    if not terms:
+    """Build a MATCH expression; CJK runs become a phrase of single chars."""
+    parts: list[str] = []
+    for cjk_run, other in _QUERY_SPLIT_RE.findall(query or ""):
+        if cjk_run:
+            # "记账" indexed as "记 账" -> phrase "记 账" keeps precision.
+            parts.append('"' + " ".join(cjk_run) + '"')
+        elif other:
+            parts.extend(
+                f'"{word.lower()}"' for word in _WORD_RE.findall(other)
+                if len(word) > 1
+            )
+    if not parts:
         return None
-    return " OR ".join(f'"{t}"' for t in terms)
+    return " OR ".join(parts[:12])
 
 
 def _snippet(text: str, terms: list[str], width: int = 160) -> str:
@@ -147,13 +199,22 @@ def _normalize(vector: list[float]) -> list[float]:
     return [x / norm for x in vector]
 
 
-def _rrf(rankings: list[list[int]], k: int = 60) -> list[int]:
+def _rrf_scores(rankings: list[list[int]], k: int = 60) -> dict[int, float]:
     """Reciprocal rank fusion of several ranked id lists."""
     scores: dict[int, float] = {}
     for ranking in rankings:
         for rank, item in enumerate(ranking):
             scores[item] = scores.get(item, 0.0) + 1.0 / (k + rank + 1)
-    return sorted(scores, key=lambda item: scores[item], reverse=True)
+    return scores
+
+
+def _safe_dir_name(name: str) -> str | None:
+    """Return ``name`` if it is a single, safe path component, else None."""
+    if not name or name in (".", ".."):
+        return None
+    if Path(name).name != name or "/" in name or "\\" in name:
+        return None
+    return name
 
 
 class DocumentStore:
@@ -181,7 +242,38 @@ class DocumentStore:
     def initialize(self):
         with self._lock:
             self.conn.executescript(_SCHEMA)
+            self._migrate()
             self.conn.commit()
+
+    def _migrate(self):
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        current = int(row["value"]) if row and str(row["value"]).isdigit() else 0
+        if current < SCHEMA_VERSION:
+            # v2 changed how text is tokenized (CJK segmentation), which only
+            # affects the index columns, so re-derive them from the raw chunks.
+            self._rebuild_fts()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+            (str(SCHEMA_VERSION),),
+        )
+
+    def _rebuild_fts(self):
+        """Re-populate the FTS index from the stored raw chunk text."""
+        self.conn.execute("DELETE FROM chunks_fts")
+        rows = self.conn.execute(
+            "SELECT id, document_id, ordinal, page, text FROM chunks"
+        ).fetchall()
+        for row in rows:
+            self.conn.execute(
+                "INSERT INTO chunks_fts (rowid, text, document_id, ordinal, page) "
+                "VALUES (?,?,?,?,?)",
+                (row["id"], segment_cjk(row["text"]), row["document_id"],
+                 row["ordinal"], row["page"]),
+            )
+        if rows:
+            logger.info("Rebuilt the document index (%s chunks)", len(rows))
 
     def close(self):
         with self._lock:
@@ -201,11 +293,18 @@ class DocumentStore:
 
     def import_path(self, path: Path, *, conversation_id: str | None = None,
                     dest_dir: Path | None = None,
-                    max_pages: int = 50, max_chars: int = 200_000) -> dict:
+                    max_pages: int = 50, max_chars: int = 200_000,
+                    reextract_failed: bool = True) -> dict:
         """Extract, chunk and index one file.
 
         With ``dest_dir`` the file is first copied into the store (used for chat
         uploads); otherwise it is indexed in place (folder scanning).
+
+        ``reextract_failed`` re-runs extraction when an identical file is
+        already recorded but is not usable yet (for example a PDF uploaded
+        before ``pypdf`` was installed). Folder scans turn this off and leave
+        healing to :meth:`retry_failed`, so a scan never re-parses the same
+        broken file twice in one run.
         """
         path = Path(path)
         if not path.is_file():
@@ -227,7 +326,15 @@ class DocumentStore:
             existing = self.conn.execute(
                 "SELECT * FROM documents WHERE id = ?", (doc_id,)
             ).fetchone()
-            if existing is not None and existing["sha256"] == sha:
+            # Only a cleanly indexed document short-circuits. A file recorded as
+            # unsupported/error/empty (e.g. uploaded before pypdf was installed)
+            # is re-extracted, otherwise the stale status could never recover.
+            if (
+                existing is not None
+                and existing["sha256"] == sha
+                and (not reextract_failed
+                     or existing["status"] == STATUS_INDEXED)
+            ):
                 if conversation_id and not existing["conversation_id"]:
                     self.conn.execute(
                         "UPDATE documents SET conversation_id = ? WHERE id = ?",
@@ -286,7 +393,8 @@ class DocumentStore:
             self.conn.execute(
                 "INSERT INTO chunks_fts (rowid, text, document_id, ordinal, page) "
                 "VALUES (?,?,?,?,?)",
-                (cursor.lastrowid, chunk.text, doc_id, ordinal, chunk.page),
+                (cursor.lastrowid, segment_cjk(chunk.text), doc_id, ordinal,
+                 chunk.page),
             )
         self._vector_cache = None
 
@@ -307,7 +415,7 @@ class DocumentStore:
                 stats["scanned"] += 1
                 try:
                     before = self.get_by_path(path)
-                    doc = self.import_path(path)
+                    doc = self.import_path(path, reextract_failed=False)
                     if before is not None and before["sha256"] == doc["sha256"]:
                         stats["skipped"] += 1
                     else:
@@ -439,33 +547,46 @@ class DocumentStore:
     def search(self, query: str, *, limit: int = 5, mode: str = "auto",
                conversation_id: str | None = None) -> list[dict]:
         """Search chunks. ``mode`` is ``auto`` (hybrid when embeddings exist),
-        ``bm25`` or ``dense``."""
-        terms = _terms(query)
-        bm25_ids: list[int] = []
+        ``bm25`` or ``dense``.
+
+        Results carry a ``score`` (higher is better) that is only comparable
+        within one mode: BM25-negated for ``bm25``, cosine for ``dense``, the
+        reciprocal-rank-fusion score for ``auto``.
+        """
+        terms = query_terms(query)
+        bm25_scores: dict[int, float] = {}
         match = _fts_query(query)
         if match and mode != "dense":
             rows = self.conn.execute(
-                """SELECT c.id AS chunk_id
+                """SELECT c.id AS chunk_id, bm25(chunks_fts) AS score
                    FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid
                    WHERE chunks_fts MATCH ?
                    ORDER BY bm25(chunks_fts) LIMIT ?""",
                 (match, max(limit * 4, 20)),
             ).fetchall()
-            bm25_ids = [r["chunk_id"] for r in rows]
+            # bm25() is negative and lower is better; flip the sign so that
+            # callers can treat "higher score = better" uniformly.
+            bm25_scores = {r["chunk_id"]: -float(r["score"]) for r in rows}
+        bm25_ids = list(bm25_scores)
 
-        dense_ids: list[int] = []
+        dense_scores: dict[int, float] = {}
         if mode in ("auto", "hybrid", "dense"):
-            dense_ids = [cid for cid, _ in self.dense_search(query, limit=max(limit * 4, 20))]
+            dense_scores = dict(
+                self.dense_search(query, limit=max(limit * 4, 20))
+            )
+        dense_ids = list(dense_scores)
 
         if mode == "dense":
-            ranked = dense_ids
+            ranked, scores = dense_ids, dense_scores
         elif dense_ids and mode in ("auto", "hybrid"):
-            ranked = _rrf([bm25_ids, dense_ids])
+            scores = _rrf_scores([bm25_ids, dense_ids])
+            ranked = sorted(scores, key=lambda item: scores[item], reverse=True)
         else:
-            ranked = bm25_ids
-        return self._hydrate(ranked[:limit], terms, conversation_id)
+            ranked, scores = bm25_ids, bm25_scores
+        return self._hydrate(ranked[:limit], terms, conversation_id, scores)
 
-    def _hydrate(self, chunk_ids, terms, conversation_id) -> list[dict]:
+    def _hydrate(self, chunk_ids, terms, conversation_id,
+                 scores: dict[int, float] | None = None) -> list[dict]:
         results = []
         for chunk_id in chunk_ids:
             row = self.conn.execute(
@@ -485,6 +606,7 @@ class DocumentStore:
                 "kind": row["kind"],
                 "page": row["page"],
                 "chunk": row["ordinal"],
+                "score": round(scores.get(chunk_id, 0.0), 6) if scores else None,
                 "snippet": _snippet(row["text"], terms),
             })
         return results
@@ -540,6 +662,75 @@ class DocumentStore:
             except OSError:
                 logger.warning("Could not remove %s", doc["source_path"])
         return True
+
+    def retry_failed(self, *, max_docs: int = 200) -> dict:
+        """Re-extract documents that failed or produced no usable text.
+
+        Without this, a document recorded as unsupported/empty (for example a
+        PDF uploaded before ``pypdf`` was installed) stayed broken forever.
+        """
+        rows = self.conn.execute(
+            "SELECT id, source_path, conversation_id FROM documents "
+            "WHERE status != ? ORDER BY updated_at DESC LIMIT ?",
+            (STATUS_INDEXED, max_docs),
+        ).fetchall()
+        retried = indexed = 0
+        errors: list[str] = []
+        for row in rows:
+            path = Path(row["source_path"])
+            retried += 1
+            if not path.is_file():
+                errors.append(f"{path.name}: file is missing")
+                continue
+            try:
+                doc = self.import_path(
+                    path, conversation_id=row["conversation_id"]
+                )
+            except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+                logger.exception("Re-extraction failed for %s", path)
+                errors.append(f"{path.name}: {e}")
+                continue
+            if doc["status"] == STATUS_INDEXED:
+                indexed += 1
+            else:
+                errors.append(f"{path.name}: {doc['error'] or doc['status']}")
+        return {
+            "retried": retried,
+            "indexed": indexed,
+            "still_failed": retried - indexed,
+            "errors": errors[:20],
+        }
+
+    def delete_conversation(self, conversation_id: str, *,
+                            remove_files: bool = True) -> dict:
+        """Drop the documents uploaded into a conversation (and their files)."""
+        if not conversation_id:
+            return {"documents": 0, "removed_dir": None}
+        rows = self.conn.execute(
+            "SELECT id FROM documents WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        removed = 0
+        for row in rows:
+            if self.delete(row["id"], remove_file=remove_files):
+                removed += 1
+
+        removed_dir = None
+        # Uploads live in <documents_dir>/<conversation_id>/; only touch it when
+        # the id is a single safe path component.
+        name = _safe_dir_name(conversation_id)
+        if remove_files and name and self.documents_dir:
+            candidate = self.documents_dir / name
+            try:
+                if (
+                    candidate.is_dir()
+                    and candidate.resolve().parent == self.documents_dir.resolve()
+                ):
+                    shutil.rmtree(candidate, ignore_errors=True)
+                    removed_dir = str(candidate)
+            except OSError:
+                logger.warning("Could not remove %s", candidate)
+        return {"documents": removed, "removed_dir": removed_dir}
 
     def status(self) -> dict:
         total = self.conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]

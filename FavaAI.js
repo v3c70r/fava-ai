@@ -737,14 +737,21 @@ export default {
             html += folders
                 ? `<p style="font-size:12px;">Folders:<br>${folders}</p>`
                 : '<p style="font-size:12px;">No folders configured. Set <code>documents.folders</code>, or Fava\'s documents folder option.</p>';
+            if (status.documents_dir) {
+                html += `<p class="doc-hint">Chat uploads: <code>${this.esc(status.documents_dir)}</code></p>`;
+            }
+            if (status.pdf_support === false) {
+                html += '<p class="doc-warning">PDF text extraction is unavailable: the <code>pypdf</code> package is not installed. Install it, then press <em>Retry failed</em> — the files are already stored.</p>';
+            }
             const embedding = status.embedding || {};
             if (embedding.configured) {
                 html += `<p style="font-size:12px;">Semantic search: <strong>${this.esc(embedding.model || '')}</strong>`;
                 html += ` — ${embedding.embedded_chunks || 0}/${embedding.total_chunks || 0} chunks embedded.</p>`;
             } else {
-                html += '<p style="font-size:12px;">Semantic search: not configured (keyword search only).<br>Set <code>documents.embedding.base_url</code> and <code>.model</code> to enable.</p>';
+                html += '<p style="font-size:12px;">Semantic search: not configured (keyword search only).<br>Add an <code>documents.embedding</code> endpoint in the <strong>Config</strong> tab to enable it.</p>';
             }
             html += '<button id="docs-index-btn" class="btn btn-sm">Index now</button>';
+            html += ' <button id="docs-retry-btn" class="btn btn-sm">Retry failed</button>';
             if (embedding.configured) {
                 html += ' <button id="docs-embed-btn" class="btn btn-sm">Embed now</button>';
                 html += ' <button id="docs-embed-test-btn" class="btn btn-sm">Test</button>';
@@ -754,6 +761,7 @@ export default {
             this.el.panelDocuments.innerHTML = html;
 
             document.getElementById('docs-index-btn').addEventListener('click', () => this.indexDocuments());
+            document.getElementById('docs-retry-btn').addEventListener('click', () => this.retryDocuments());
             const embedBtn = document.getElementById('docs-embed-btn');
             if (embedBtn) embedBtn.addEventListener('click', () => this.embedDocuments());
             const testBtn = document.getElementById('docs-embed-test-btn');
@@ -770,8 +778,35 @@ export default {
         status.className = 'config-status';
         try {
             const stats = await this.api('POST', 'documents_index', {});
-            status.textContent = `Indexed ${stats.indexed} new, skipped ${stats.skipped}, errors ${stats.errors}.`;
-            status.className = 'config-status ok';
+            const retry = stats.retry || {};
+            let message = `Indexed ${stats.indexed} new, skipped ${stats.skipped}, errors ${stats.errors}.`;
+            if (retry.retried) {
+                message += ` Retried ${retry.retried}, recovered ${retry.indexed}, still failing ${retry.still_failed}.`;
+            }
+            message += ` Embedded ${(stats.embedding || {}).embedded ?? 0}.`;
+            status.textContent = message;
+            status.className = 'config-status ' + (stats.errors || retry.still_failed ? 'err' : 'ok');
+            await this.loadDocuments();
+        } catch (e) {
+            status.textContent = 'Error: ' + (e.message || e);
+            status.className = 'config-status err';
+        }
+    },
+
+    async retryDocuments() {
+        const status = document.getElementById('docs-status');
+        status.textContent = 'Retrying\u2026';
+        status.className = 'config-status';
+        try {
+            const result = await this.api('POST', 'documents_retry', {});
+            if (!result.retried) {
+                status.textContent = 'Nothing to retry.';
+                status.className = 'config-status ok';
+            } else {
+                status.textContent = `Retried ${result.retried}, recovered ${result.indexed}, still failing ${result.still_failed}.` +
+                    (result.errors && result.errors.length ? ` ${result.errors[0]}` : '');
+                status.className = 'config-status ' + (result.still_failed ? 'err' : 'ok');
+            }
             await this.loadDocuments();
         } catch (e) {
             status.textContent = 'Error: ' + (e.message || e);
@@ -799,9 +834,10 @@ export default {
         const status = document.getElementById('docs-status');
         try {
             const result = await this.api('POST', 'documents_embed_test', {});
+            const error = result.error || result.detail;
             status.textContent = result.connected
                 ? `Embedding OK (${result.detail || 'connected'}).`
-                : `Embedding failed: ${result.error || 'unknown error'}`;
+                : `Embedding failed: ${error || 'unknown error'}`;
             status.className = 'config-status ' + (result.connected ? 'ok' : 'err');
         } catch (e) {
             status.textContent = 'Error: ' + (e.message || e);
@@ -951,6 +987,17 @@ export default {
             html += `<input id="cfg-max-tool-calls" type="number" min="1" value="${this.esc(agent.max_tool_calls ?? '')}">`;
             html += '<label>timeout_seconds</label>';
             html += `<input id="cfg-timeout" type="number" min="1" value="${this.esc(agent.timeout_seconds ?? '')}">`;
+            const documents = config.documents || {};
+            const embedding = documents.embedding || {};
+            html += '<h4 style="margin-top:14px;">Documents</h4>';
+            html += '<label>enabled</label>';
+            html += `<input id="cfg-docs-enabled" type="checkbox"${documents.enabled ? ' checked' : ''}>`;
+            html += '<label>embedding.base_url</label>';
+            html += `<input id="cfg-embed-base-url" type="text" value="${this.esc(embedding.base_url || '')}" placeholder="http://localhost:8080/v1">`;
+            html += '<label>embedding.model</label>';
+            html += `<input id="cfg-embed-model" type="text" value="${this.esc(embedding.model || '')}" placeholder="qwen3-0.6b-embedding">`;
+            html += '<label>embedding.api_key</label>';
+            html += `<input id="cfg-embed-api-key" type="text" value="${this.esc(embedding.api_key || '')}" placeholder="***">`;
             html += '<button id="cfg-save" class="btn btn-sm">Save</button>';
             html += '<div id="cfg-status" class="config-status"></div>';
             html += '</div>';
@@ -997,6 +1044,22 @@ export default {
         ]) {
             const value = parseInt(document.getElementById(id).value, 10);
             if (!Number.isNaN(value)) doc.agent[field] = value;
+        }
+
+        doc.documents = doc.documents || {};
+        doc.documents.enabled = !!document.getElementById('cfg-docs-enabled').checked;
+        const embedBaseUrl = document.getElementById('cfg-embed-base-url').value.trim();
+        const embedModel = document.getElementById('cfg-embed-model').value.trim();
+        const embedApiKey = document.getElementById('cfg-embed-api-key').value;
+        if (embedBaseUrl || embedModel) {
+            doc.documents.embedding = doc.documents.embedding || {};
+            doc.documents.embedding.base_url = embedBaseUrl;
+            doc.documents.embedding.model = embedModel;
+            if (embedApiKey) doc.documents.embedding.api_key = embedApiKey;
+        } else {
+            // Both empty means "keyword search only"; drop the block so no
+            // half-configured endpoint is written.
+            delete doc.documents.embedding;
         }
 
         try {

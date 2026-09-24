@@ -124,3 +124,40 @@ def test_document_upload_ui_is_wired():
     assert "documents_upload" in JS
     assert "documents?conversation_id=" not in JS  # no hardcoded URL string
     assert "file_ids" in JS
+
+
+def test_attach_button_is_a_real_paperclip():
+    """A Python `\\U0001f4ce` escape was pasted into HTML and rendered literally."""
+    assert r"\U0001f4ce" not in HTML
+    assert "&#x1F4CE;" in HTML
+
+
+def test_no_python_unicode_escapes_in_ui_assets():
+    """Jinja2 renders HTML verbatim, so a U+1F4CE escape there is literal text.
+
+    JavaScript does interpret its own uXXXX string escapes, so only the
+    8-digit Python form is wrong in the JS file.
+    """
+    assert re.findall(r"\\[Uu][0-9a-fA-F]{4,8}", HTML) == []
+    assert re.findall(r"\\U[0-9a-fA-F]{8}", JS) == []
+
+
+def test_config_panel_exposes_embedding_fields():
+    """The embedding endpoint was config-only; it needs a UI surface (1.1)."""
+    for field in ("cfg-embed-base-url", "cfg-embed-model", "cfg-embed-api-key",
+                  "cfg-docs-enabled"):
+        assert field in JS, field
+    assert "documents.embedding" in JS
+
+
+def test_docs_panel_surfaces_extraction_and_embedding_state():
+    assert "docs-retry-btn" in JS
+    assert "retryDocuments" in JS
+    assert "documents_retry" in JS
+    assert "pdf_support" in JS
+    assert "doc-hint" in HTML and "doc-warning" in HTML
+
+
+def test_embedding_test_shows_the_backend_error():
+    """The panel read `result.error`, but the endpoint returned `detail` (2.1)."""
+    assert "result.error || result.detail" in JS
