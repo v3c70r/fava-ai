@@ -524,7 +524,7 @@ def test_fts_query_uses_a_phrase_for_cjk_runs():
 def test_search_finds_unspaced_chinese(store, tmp_path):
     """unicode61 cannot segment CJK, so `记账` used to return nothing."""
     path = tmp_path / "ledger-notes.txt"
-    path.write_text("记账软件测试记录：本月支出与收入明细")
+    path.write_text("记账软件测试记录：本月支出与收入明细", encoding="utf-8")
     store.import_path(path)
 
     for query in ("记账", "支出", "记"):
@@ -684,7 +684,7 @@ def test_delete_conversation_ignores_unsafe_ids(store, tmp_path):
 def test_index_migration_reesegments_existing_chunks(tmp_path):
     db = tmp_path / "documents.db"
     source = tmp_path / "notes.txt"
-    source.write_text("记账软件测试记录")
+    source.write_text("记账软件测试记录", encoding="utf-8")
 
     first = DocumentStore(db, tmp_path / "documents")
     first.initialize()

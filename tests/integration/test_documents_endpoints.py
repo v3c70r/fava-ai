@@ -48,7 +48,18 @@ def test_documents_status(client, ext):
     assert status["embedding"]["configured"] is False
 
 
-def test_index_without_folders_returns_400(client, ext):
+def test_index_disabled_returns_403(client, ext):
+    """`documents.enabled` gates folder indexing (chat uploads still work)."""
+    resp = client.post("/documents_index", json={})
+    assert resp.status_code == 403
+    assert "disabled" in resp.get_json()["error"].lower()
+
+
+def test_index_enabled_without_folders_returns_400(client, ext, tmp_path):
+    (ext.config_dir / "config.yaml").write_text(
+        yaml.dump({"documents": {"enabled": True}})
+    )
+    ext._config_manager._load_yaml()
     resp = client.post("/documents_index", json={})
     assert resp.status_code == 400
     assert "folders" in resp.get_json()["error"].lower()
@@ -152,16 +163,21 @@ def test_status_separates_configured_and_scanned_folders(client, ext):
 
 
 def test_fava_documents_option_as_a_list_is_indexed(client, ext, tmp_path):
-    """Beancount parses `option "documents" "documents"` as a LIST (1.4)."""
-    from types import SimpleNamespace
+    """Fava reads `option "documents" ...` from the RAW beancount options map.
 
+    It is not an attribute of ``fava_options`` in Fava 1.30, so that path was
+    dead code and the folder silently dropped again (review round 2, §1.4).
+    """
     docs_dir = tmp_path / "documents"
     docs_dir.mkdir()
-    (docs_dir / "receipt.md").write_text("Landlord: Example Properties, rent 1500")
-
-    # This used to raise TypeError inside a swallowed except, so the folder was
-    # silently dropped and /documents_index answered "no folders configured".
-    ext.ledger.fava_options = SimpleNamespace(documents=["documents"])
+    (docs_dir / "receipt.md").write_text(
+        "Landlord: Example Properties, rent 1500", encoding="utf-8"
+    )
+    (ext.config_dir / "config.yaml").write_text(
+        yaml.dump({"documents": {"enabled": True}})
+    )
+    ext._config_manager._load_yaml()
+    ext.ledger.options["documents"] = ["documents"]
 
     status = client.get("/documents").get_json()
     assert status["folders"] == [str(docs_dir)]
@@ -172,6 +188,44 @@ def test_fava_documents_option_as_a_list_is_indexed(client, ext, tmp_path):
 
     listed = client.get("/documents?all=1").get_json()
     assert [d["name"] for d in listed] == ["receipt.md"]
+
+
+def test_documents_option_falls_back_to_fava_options(client, ext, tmp_path):
+    """Older Fava versions expose the option on the fava_options object."""
+    from types import SimpleNamespace
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("fallback content", encoding="utf-8")
+    (ext.config_dir / "config.yaml").write_text(
+        yaml.dump({"documents": {"enabled": True}})
+    )
+    ext._config_manager._load_yaml()
+    ext.ledger.fava_options = SimpleNamespace(documents=["docs"])
+
+    status = client.get("/documents").get_json()
+    assert status["folders"] == [str(docs_dir)]
+
+
+def test_documents_option_resolves_through_ledger_join_path(client, ext, tmp_path):
+    """Paths resolve the same way Fava's own documents module does."""
+    resolved = tmp_path / "resolved" / "documents"
+    resolved.mkdir(parents=True)
+    (resolved / "joined.md").write_text("joined content", encoding="utf-8")
+    (ext.config_dir / "config.yaml").write_text(
+        yaml.dump({"documents": {"enabled": True}})
+    )
+    ext._config_manager._load_yaml()
+    ext.ledger.options["documents"] = ["documents"]
+    ext.ledger.join_path = lambda p: str(tmp_path / "resolved" / p)
+
+    status = client.get("/documents").get_json()
+    assert status["folders"] == [str(resolved)]
+
+    resp = client.post("/documents_index", json={})
+    assert resp.status_code == 200
+    listed = client.get("/documents?all=1").get_json()
+    assert [d["name"] for d in listed] == ["joined.md"]
 
 
 def test_embed_test_surfaces_the_real_error(client, ext, monkeypatch):
@@ -186,9 +240,10 @@ def test_embed_test_surfaces_the_real_error(client, ext, monkeypatch):
     ext._config_manager._load_yaml()
     ext._refresh_embedder()
 
+    # The endpoint rebuilds the client (freshness fix), so patch the class.
     monkeypatch.setattr(
-        ext._document_store.embedder, "test_connection",
-        lambda: (False, "HTTP 500: model failed to load"),
+        type(ext._document_store.embedder), "test_connection",
+        lambda self: (False, "HTTP 500: model failed to load"),
     )
     payload = client.post("/documents_embed_test", json={}).get_json()
     assert payload["connected"] is False
@@ -266,3 +321,48 @@ def test_put_config_still_rejects_a_lone_config_dir(client, ext):
     """Filtering config_dir must not turn an empty payload into a wipe (2.4)."""
     resp = client.put("/config", json={"config_dir": ".fava-ai"})
     assert resp.status_code == 400
+
+
+# ── round 2: embedder freshness ───────────────────────────────────
+
+
+def test_embed_test_uses_the_freshly_saved_key(client, ext):
+    """A key saved in the Config tab must be the one being tested (N1)."""
+    def write(key):
+        (ext.config_dir / "config.yaml").write_text(yaml.dump({
+            "documents": {"embedding": {
+                "base_url": "http://x/v1", "model": "m", "api_key": key,
+            }},
+        }))
+        ext._config_manager._load_yaml()
+
+    write("old-key")
+    ext._refresh_embedder()
+    stale = ext._document_store.embedder
+    assert stale.api_key == "old-key"
+
+    write("new-key")
+
+    from unittest.mock import patch
+    with patch.object(
+        type(stale), "test_connection", lambda self: (True, "fresh")
+    ):
+        payload = client.post("/documents_embed_test", json={}).get_json()
+
+    assert payload == {"connected": True, "detail": "fresh"}
+    assert ext._document_store.embedder is not stale
+    assert ext._document_store.embedder.api_key == "new-key"
+
+
+def test_documents_status_reflects_a_freshly_saved_embedding(client, ext):
+    """The panel must not keep claiming "not configured" after a save (N2)."""
+    assert client.get("/documents").get_json()["embedding"]["configured"] is False
+
+    (ext.config_dir / "config.yaml").write_text(yaml.dump({
+        "documents": {"embedding": {"base_url": "http://x/v1", "model": "m"}},
+    }))
+    ext._config_manager._load_yaml()
+
+    status = client.get("/documents").get_json()
+    assert status["embedding"]["configured"] is True
+    assert status["embedding_configured"] is True

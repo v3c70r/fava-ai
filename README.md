@@ -262,8 +262,11 @@ documents:
 
 The **Docs** tab shows the index status and has an *Index now* button (also
 `POST /documents_index`). Fava's own `documents` folder option is included
-automatically (both as a single value and as the list beancount actually parses
-it into). Indexing is incremental — content-hashed files are skipped.
+automatically: it is read from the raw beancount options map (where Fava itself
+reads it) and resolved with `ledger.join_path`, so relative, absolute and
+repeatable `option "documents" …` lines all work. Folder indexing is gated by
+`documents.enabled` (off by default — the panel tells you); chat uploads are
+always available. Indexing is incremental — content-hashed files are skipped.
 
 The panel also lists everything it could not use, and *Retry failed*
 (`POST /documents_retry`) re-extracts those documents in place. That matters for
