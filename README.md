@@ -289,9 +289,9 @@ covers most personal-document queries:
 ```yaml
 documents:
   embedding:
-    base_url: http://192.168.0.92:8080/v1
+    base_url: http://localhost:8080/v1
     api_key: ${EMBEDDING_API_KEY}
-    model: qwen3-4b-embedding
+    model: nomic-embed-text
 ```
 
 Use *Embed now* in the Docs tab (or `POST /documents_embed`). A *Test* button

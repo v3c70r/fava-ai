@@ -1005,7 +1005,7 @@ export default {
             html += '<label for="cfg-docs-enabled">enabled</label>';
             html += `<input id="cfg-docs-enabled" type="checkbox"${documents.enabled ? ' checked' : ''}>`;
             html += field('cfg-embed-base-url', 'embedding.base_url', embedding.base_url, 'type="text" placeholder="http://localhost:8080/v1"');
-            html += field('cfg-embed-model', 'embedding.model', embedding.model, 'type="text" placeholder="qwen3-0.6b-embedding"');
+            html += field('cfg-embed-model', 'embedding.model', embedding.model, 'type="text" placeholder="nomic-embed-text"');
             html += field('cfg-embed-api-key', 'embedding.api_key', embedding.api_key, 'type="text" placeholder="***"');
             html += '<button id="cfg-save" class="btn btn-sm">Save</button>';
             html += '<div id="cfg-status" class="config-status"></div>';

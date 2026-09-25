@@ -8,7 +8,7 @@ of ledger questions, reporting latency, tool usage, provenance and errors.
 Usage:
     python scripts/eval_local.py \
         --base-url http://localhost:8080/v1 \
-        --api-key simple_token \
+        --api-key "$EMBEDDING_API_KEY" \
         --model /path/to/model.gguf \
         --ledger tests/data/ledgers/rich-features.beancount
 
