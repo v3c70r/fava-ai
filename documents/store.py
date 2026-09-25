@@ -219,10 +219,15 @@ def _safe_dir_name(name: str) -> str | None:
 
 class DocumentStore:
     def __init__(self, db_path: Path, documents_dir: Path | None = None,
-                 embedder: EmbeddingClient | None = None):
+                 embedder: EmbeddingClient | None = None,
+                 hybrid_min_score: float = 0.2):
         self.db_path = Path(db_path)
         self.documents_dir = Path(documents_dir) if documents_dir else None
         self._embedder = embedder
+        #: Below this best-cosine the dense ranking is treated as noise and
+        #: dropped from the fusion (a small embedder can return a confidently
+        #: wrong top hit and drag the hybrid result below plain BM25).
+        self.hybrid_min_score = hybrid_min_score
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()
         self._vector_cache: list[tuple[int, array]] | None = None
@@ -281,8 +286,15 @@ class DocumentStore:
                 self._conn.close()
                 self._conn = None
 
-    def set_embedder(self, embedder: EmbeddingClient | None):
+    def set_embedder(self, embedder: EmbeddingClient | None, *,
+                     min_score: float | None = None):
+        """Install the embedding client and the retrieval threshold with it."""
         self._embedder = embedder
+        if min_score is not None:
+            try:
+                self.hybrid_min_score = min(max(float(min_score), 0.0), 1.0)
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid hybrid_min_score %r", min_score)
         self._vector_cache = None
 
     @property
@@ -574,6 +586,19 @@ class DocumentStore:
             dense_scores = dict(
                 self.dense_search(query, limit=max(limit * 4, 20))
             )
+            # Only relevant for fusion: an explicit `dense` request is answered
+            # as asked. If the embedder's best match is barely related, its
+            # ranking is noise and would push good BM25 hits down.
+            if (
+                mode in ("auto", "hybrid")
+                and dense_scores
+                and max(dense_scores.values()) < self.hybrid_min_score
+            ):
+                logger.debug(
+                    "Ignoring dense ranking for %r: best cosine %.3f < %.3f",
+                    query, max(dense_scores.values()), self.hybrid_min_score,
+                )
+                dense_scores = {}
         dense_ids = list(dense_scores)
 
         if mode == "dense":

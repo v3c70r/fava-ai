@@ -386,6 +386,9 @@ def test_embed_pending_and_hybrid_search(store, docs_dir, monkeypatch):
     assert store.embedding_status()["configured"] is False
 
     store.set_embedder(EmbeddingClient(base_url="http://x/v1", model="m"))
+    # Pin the fusion threshold so this keeps testing fusion, whatever the
+    # default becomes; the threshold itself has its own tests below.
+    store.hybrid_min_score = 0.0
     result = store.embed_pending()
     assert result["embedded"] > 0 and result["error"] is None
 
@@ -414,6 +417,7 @@ def test_hybrid_fuses_bm25_and_dense(store, docs_dir, monkeypatch):
     _fake_embeddings(monkeypatch)
     store.scan_folders([docs_dir])
     store.set_embedder(EmbeddingClient(base_url="http://x/v1", model="m"))
+    store.hybrid_min_score = 0.0  # fusion always participates here
     store.embed_pending()
     # "cafe" appears literally only in the receipt; dense matching should not
     # push an unrelated document above it.
@@ -731,3 +735,63 @@ def test_punctuation_only_query_is_reported(store, docs_dir):
     payload = json.loads(result.content)
     assert payload["results"] == []
     assert "no searchable words" in payload["message"]
+
+
+# ── hybrid threshold (round 3 observation) ────────────────────────
+
+
+def _chunk_outside(store, document_ids):
+    """A chunk whose document is not among ``document_ids``."""
+    placeholders = ",".join("?" * len(document_ids))
+    return store.conn.execute(
+        f"SELECT id FROM chunks WHERE document_id NOT IN ({placeholders}) LIMIT 1",
+        document_ids,
+    ).fetchone()["id"]
+
+
+def test_hybrid_ignores_a_noisy_dense_ranking(store, docs_dir, monkeypatch):
+    """A weak embedder's near-zero cosine must not drag BM25 hits down."""
+    store.scan_folders([docs_dir])
+    bm25 = [h["document_id"] for h in store.search("rent", mode="bm25")]
+    assert bm25
+    other = _chunk_outside(store, bm25)
+    other_doc = store.conn.execute(
+        "SELECT document_id FROM chunks WHERE id = ?", (other,)
+    ).fetchone()["document_id"]
+
+    # Best cosine 0.02 -> below the threshold, so the dense list is dropped and
+    # the hybrid result is exactly the BM25 ranking.
+    monkeypatch.setattr(
+        store, "dense_search", lambda q, limit=20: [(other, 0.02)]
+    )
+    assert [h["document_id"] for h in store.search("rent", mode="auto")] == bm25
+
+    # The same chunk with a confident score does take part in the fusion, so
+    # its (BM25-invisible) document now reaches the result.
+    monkeypatch.setattr(
+        store, "dense_search", lambda q, limit=20: [(other, 0.9)]
+    )
+    fused = [h["document_id"] for h in store.search("rent", mode="auto")]
+    assert other_doc not in bm25
+    assert other_doc in fused
+
+
+def test_explicit_dense_mode_ignores_the_threshold(store, docs_dir, monkeypatch):
+    """An explicit `dense` request is answered as asked, noise or not."""
+    store.scan_folders([docs_dir])
+    chunk_id = store.conn.execute("SELECT id FROM chunks LIMIT 1").fetchone()["id"]
+    monkeypatch.setattr(
+        store, "dense_search", lambda q, limit=20: [(chunk_id, 0.01)]
+    )
+    assert store.search("rent", mode="dense")
+    assert store.search("rent", mode="hybrid") == store.search("rent", mode="bm25")
+
+
+def test_hybrid_min_score_is_clamped(store):
+    store.hybrid_min_score = 0.2
+    store.set_embedder(None, min_score=5)
+    assert store.hybrid_min_score == 1.0
+    store.set_embedder(None, min_score=-3)
+    assert store.hybrid_min_score == 0.0
+    store.set_embedder(None, min_score="not a number")
+    assert store.hybrid_min_score == 0.0  # unchanged by the invalid value

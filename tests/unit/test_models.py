@@ -246,3 +246,47 @@ def test_provider_registry_connection_cache_invalidate():
 
     reg.invalidate()
     assert reg._connection_cache == {}
+
+
+def test_provider_registry_reload_picks_up_config_changes(tmp_dir):
+    """A key saved via PUT /config must not need a Fava restart (round 3, N6)."""
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {
+        "providers": {"local": {
+            "base_url": "http://localhost:8080/v1", "api_key": "old", "model": "m",
+        }},
+    }, tmp_dir)
+    reg = ProviderRegistry(cm)
+    stale = reg.get("local")
+    assert stale.api_key == "old"
+
+    cm._extension_config = {
+        "providers": {"local": {
+            "base_url": "http://localhost:8080/v1", "api_key": "new", "model": "m",
+        }},
+    }
+    reg.reload()
+
+    assert reg.get("local").api_key == "new"
+    assert reg.get("local") is not stale
+
+
+def test_provider_registry_reload_drops_removed_providers(tmp_dir):
+    from fava_ai.config import ConfigManager
+    from fava_ai.models.registry import ProviderRegistry
+
+    cm = ConfigManager(None, {
+        "providers": {
+            "a": {"base_url": "http://a/v1", "model": "m"},
+            "b": {"base_url": "http://b/v1", "model": "m"},
+        },
+    }, tmp_dir)
+    reg = ProviderRegistry(cm)
+    assert reg.get("b") is not None
+
+    cm._extension_config = {"providers": {"a": {"base_url": "http://a/v1", "model": "m"}}}
+    reg.reload()
+    assert reg.get("b") is None
+    assert reg.get("a") is not None

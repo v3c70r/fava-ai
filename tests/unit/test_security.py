@@ -230,3 +230,26 @@ def test_wiki_read_missing_page_reports_error(client=None):
         result = tool.execute(path="nope.md")
         assert result.metadata["error"]
         assert json.loads(result.content)["error"]
+
+
+def test_validate_config_accepts_documents_section():
+    errors = validate_config({
+        "documents": {
+            "enabled": True,
+            "folders": ["/tmp/docs"],
+            "hybrid_min_score": 0.3,
+            "embedding": {"base_url": "http://x/v1", "model": "m"},
+        },
+    })
+    assert errors == []
+
+
+def test_validate_config_rejects_bad_hybrid_min_score():
+    for value in (2, -1, "high", True):
+        errors = validate_config({"documents": {"hybrid_min_score": value}})
+        assert any("hybrid_min_score" in e for e in errors), value
+
+
+def test_validate_config_rejects_unknown_documents_key():
+    errors = validate_config({"documents": {"hybrid_minscore": 0.3}})
+    assert any("unknown keys" in e for e in errors)

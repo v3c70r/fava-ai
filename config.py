@@ -36,6 +36,9 @@ DEFAULT_CONFIG: dict[str, dict] = {
         "max_file_mb": 25,
         "max_pages": 50,
         "max_chars_per_doc": 200000,
+        # Hybrid retrieval: ignore the dense ranking when even its best cosine
+        # is below this (a weak embedder otherwise drags the fused result down).
+        "hybrid_min_score": 0.2,
         # Optional OpenAI-compatible /v1/embeddings endpoint (phase 2).
         "embedding": {},
     },
@@ -113,7 +116,7 @@ _ALLOWED_KNOWLEDGE_KEYS = {"auto_extract"}
 _ALLOWED_TOOLS_KEYS = {"external_enabled", "allow_ledger_writes", "ledger_writes_file"}
 _ALLOWED_DOCUMENTS_KEYS = {
     "enabled", "folders", "max_file_mb", "max_pages", "max_chars_per_doc",
-    "embedding",
+    "hybrid_min_score", "embedding",
 }
 _DOCUMENT_INT_KEYS = ("max_file_mb", "max_pages", "max_chars_per_doc")
 
@@ -246,6 +249,16 @@ def validate_config(data) -> list[str]:
                     errors.append(f"'documents.{key}' must be a positive integer")
             if "embedding" in documents and not isinstance(documents["embedding"], dict):
                 errors.append("'documents.embedding' must be a mapping")
+            if "hybrid_min_score" in documents:
+                score = documents["hybrid_min_score"]
+                if (
+                    isinstance(score, bool)
+                    or not isinstance(score, (int, float))
+                    or not 0 <= score <= 1
+                ):
+                    errors.append(
+                        "'documents.hybrid_min_score' must be a number between 0 and 1"
+                    )
 
     return errors
 

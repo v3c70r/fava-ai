@@ -1010,7 +1010,7 @@ export default {
             html += '<button id="cfg-save" class="btn btn-sm">Save</button>';
             html += '<div id="cfg-status" class="config-status"></div>';
             html += '</div>';
-            html += '<p class="config-hint">Secrets are shown masked as <code>***</code>; leaving them unchanged keeps the stored value. Prefer editing the beancount directive for anything that belongs in version control.</p>';
+            html += '<p class="config-hint">Secrets are shown masked as <code>***</code>; leaving them unchanged keeps the stored value. Changes apply immediately (no Fava restart). Prefer editing the beancount directive for anything that belongs in version control.</p>';
 
             this.el.panelConfig.innerHTML = html;
 

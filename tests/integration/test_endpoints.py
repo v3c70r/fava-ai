@@ -459,3 +459,31 @@ def _parse_sse(text: str) -> list[dict]:
         if line.startswith("data:"):
             frames.append(json.loads(line[len("data:"):].strip()))
     return frames
+
+
+def test_put_config_rebuilds_provider_clients(client, ext, tmp_path):
+    """A provider key saved in the UI must take effect without a restart (N6)."""
+    import yaml
+
+    (ext.config_dir / "config.yaml").write_text(yaml.dump({
+        "providers": {"local": {
+            "base_url": "http://127.0.0.1:8080/v1", "model": "m", "api_key": "old",
+        }},
+    }))
+    ext._config_manager._load_yaml()
+    ext._provider_registry.reload()
+    stale = ext._provider_registry.get("local")
+    assert stale is not None and stale.api_key == "old"
+
+    resp = client.put("/config", json={
+        "providers": {"local": {
+            "base_url": "http://127.0.0.1:8080/v1", "model": "m", "api_key": "new",
+        }},
+    })
+    assert resp.status_code == 200
+
+    # Deliberately no reload() here: PUT /config has to have done it, otherwise
+    # the user keeps getting 401s from a config that reads as "saved".
+    rebuilt = ext._provider_registry.get("local")
+    assert rebuilt is not stale
+    assert rebuilt.api_key == "new"
