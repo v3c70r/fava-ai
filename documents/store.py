@@ -225,8 +225,10 @@ class DocumentStore:
         self.documents_dir = Path(documents_dir) if documents_dir else None
         self._embedder = embedder
         #: Below this best-cosine the dense ranking is treated as noise and
-        #: dropped from the fusion (a small embedder can return a confidently
-        #: wrong top hit and drag the hybrid result below plain BM25).
+        #: dropped from the fusion: a weak embedder can return a list of
+        #: barely-related chunks and drag the hybrid result below plain BM25.
+        #: It does not help when a small model is *confidently* wrong (best
+        #: cosine well above the floor) - that needs a higher value.
         self.hybrid_min_score = hybrid_min_score
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()

@@ -76,9 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now rebuilds them on save (the same staleness class as the embedding *Test* button), and
   removing a provider from the config also drops it.
 - **Hybrid search could rank below plain BM25** with a weak embedder: plain reciprocal
-  rank fusion let a confidently-wrong dense top hit drag the fused result down. The dense
-  ranking is now ignored when its best cosine is below `documents.hybrid_min_score`
-  (default `0.2`), so retrieval falls back to BM25 instead of getting worse.
+  rank fusion gave a dense list of clearly-unrelated results full weight. The dense ranking
+  is now ignored when its best cosine is below `documents.hybrid_min_score` (default `0.2`),
+  so retrieval falls back to BM25 instead of getting worse. Note the floor only filters
+  noise: a small model that is *confidently* wrong (observed at cosine ~0.55) still wins the
+  fusion and needs a higher `hybrid_min_score` — see the README "Optional: semantic search".
 
 ### Changed
 - **Configuration is now primarily the beancount directive.** The `fava-extension`

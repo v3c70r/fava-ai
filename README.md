@@ -305,11 +305,27 @@ mode, the fused score in hybrid mode) so the agent can tell a strong match from
 a weak one.
 
 Hybrid fusion ignores the dense ranking when even its best cosine is below
-`documents.hybrid_min_score` (default `0.2`). Small embedding models happily
-return a confidently wrong nearest neighbour — observed live: for
-`subaru registration 2023` the 0.6B model's top cosine was ~0.03 and its
-ranking pushed unrelated documents above the correct BM25 hits. Raising the
-threshold is more aggressive; `0.0` always fuses.
+`documents.hybrid_min_score` (default `0.2`); `0.0` always fuses.
+
+Be clear about what that floor does and does not do. It drops dense results that are
+*clearly unrelated* (best cosine below the threshold, so the embedder has nothing to
+contribute). It cannot rescue a small model that is **confidently wrong** — a 0.6B model
+scored a wrong answer at cosine ~0.55 for the query below, which is far above the default
+0.2, so fusion still followed it and ranked unrelated insurance PDFs above the correct
+BM25 hits for `subaru registration 2023`:
+
+| Signal | Value on that query |
+|---|---|
+| Best dense cosine | ~0.55 (above the 0.2 floor, so dense participated) |
+| Fused RRF score of the top hit | ~0.03 (the number easily mistaken for a similarity) |
+
+If keyword results look right but hybrid results look wrong, raise
+`hybrid_min_score` past the model's typical best cosine — `0.6` on the model above — or use
+a stronger embedding model. Setting it above that point makes `auto` reproduce the BM25
+ranking, which is the honest outcome: the embedder was not adding signal.
+
+> The floor is only applied to *fusion*. An explicit `mode="dense"` request is always
+> answered as asked, so you can compare the two rankings yourself.
 
 > The endpoint must actually serve embeddings: llama.cpp needs `--embeddings`
 > (and many models are loaded without it), Ollama and OpenAI work as-is.
