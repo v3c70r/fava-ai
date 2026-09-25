@@ -34,10 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantic search to hand-written YAML.
 
 ### Fixed
-- **Fava's `documents` folder option was silently ignored.** Beancount parses it as a
-  list, and joining a `Path` with a list raised a `TypeError` that a broad `except`
-  swallowed — so the folder vanished and `POST /documents_index` answered "no folders
-  configured" for a ledger that plainly configured one.
+- **Fava's `documents` folder option was silently ignored.** Two rounds of wrong: first,
+  joining a `Path` with the list beancount parses raised a swallowed `TypeError`; after
+  that was fixed it turned out Fava 1.30 does not expose the option on `fava_options` at
+  all (that attribute path was dead code), so the folder still vanished. It is now read
+  from the raw beancount options map — where Fava's own documents module reads it — and
+  resolved with `ledger.join_path`.
 - **Failed extractions never recovered.** A file recorded as `unsupported`/`error` was
   returned from cache on re-import (matching `sha256` short-circuited extraction), so a
   PDF first seen without `pypdf` stayed unusable. Re-importing now re-extracts, and
@@ -58,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round-tripped config failed validation.
 - Punctuation-only searches now say so instead of looking like "no matches"; search
   results expose a relevance `score`.
+- **The embedding *Test* button tested a stale client** — it read the client built at
+  startup, so an api_key just saved in the Config tab still tested the old key (401)
+  until some other endpoint happened to rebuild it. *Test* and the Docs panel now
+  refresh before reporting, so a saved key is the one that gets tested.
+- **`documents.enabled` was decorative.** It now gates folder indexing
+  (`POST /documents_index` → 403 with a hint, and the panel says so); chat uploads are
+  unaffected.
+- Config inputs are labelled with `for=`, so screen readers can tell the provider key
+  from the embedding key.
+- Document tests write UTF-8 explicitly and pass on non-UTF-8 locales (e.g. Windows).
 
 ### Changed
 - **Configuration is now primarily the beancount directive.** The `fava-extension`

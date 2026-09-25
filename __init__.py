@@ -634,31 +634,50 @@ class FavaAI(FavaExtensionBase):
                 EmbeddingClient.from_config(self._documents_config.get("embedding"))
             )
 
+    def _fava_document_values(self) -> list[str]:
+        """Fava's ``documents`` option, from wherever this Fava version keeps it.
+
+        Fava 1.30 does not expose it on ``fava_options`` (that dataclass has
+        ``import_dirs``, ``default_file``, …): its own documents module reads
+        the raw beancount option map. Older versions kept an attribute there,
+        so both sources are tried.
+        """
+        options = getattr(self.ledger, "options", None)
+        raw = options.get("documents") if isinstance(options, dict) else None
+        if not raw:
+            fava_options = getattr(self.ledger, "fava_options", None)
+            raw = getattr(fava_options, "documents", None)
+        if isinstance(raw, (list, tuple)):
+            return [str(d) for d in raw if d]
+        return [str(raw)] if raw else []
+
+    def _resolve_ledger_path(self, value: str) -> str:
+        """Resolve a ledger-relative path the way Fava itself does."""
+        join_path = getattr(self.ledger, "join_path", None)
+        if callable(join_path):
+            try:
+                return str(join_path(value))
+            except Exception:  # noqa: BLE001 - fall back to our own join
+                logger.debug("ledger.join_path failed for %r", value, exc_info=True)
+        return str(Path(self.ledger_dir) / value)
+
     def _configured_document_folders(self) -> list[str]:
         """User-configured folders plus Fava's documents folder (no uploads)."""
         folders = [
             str(f) for f in self._documents_config.get("folders", []) if f
         ]
-        try:
-            fava_documents = getattr(self.ledger.fava_options, "documents", None)
-            # Beancount parses `option "documents" "documents"` as a LIST, and
-            # the option is repeatable, so handle both shapes. Treating it as a
-            # plain string raised a TypeError that was silently swallowed,
-            # which dropped the folder and made indexing claim there was none.
-            if isinstance(fava_documents, (list, tuple)):
-                candidates = [d for d in fava_documents if d]
-            elif fava_documents:
-                candidates = [fava_documents]
-            else:
-                candidates = []
-            for candidate in candidates:
-                folders.append(str(Path(self.ledger_dir) / str(candidate)))
-        except Exception:
-            logger.warning(
-                "Could not resolve Fava's documents folder; indexing only the "
-                "configured folders",
-                exc_info=True,
-            )
+        # `option "documents" "documents"` is a repeatable beancount option,
+        # so the value is a list; a bare string is accepted for robustness.
+        for candidate in self._fava_document_values():
+            try:
+                folders.append(self._resolve_ledger_path(candidate))
+            except Exception:
+                logger.warning(
+                    "Could not resolve Fava's documents folder %r; indexing "
+                    "only the configured folders",
+                    candidate,
+                    exc_info=True,
+                )
         return self._dedupe(folders)
 
     def _document_folders(self) -> list[str]:
@@ -721,6 +740,10 @@ class FavaAI(FavaExtensionBase):
     def api_documents(self):
         if not self._document_store:
             return jsonify({"enabled": False})
+        # Refresh so a config saved seconds ago is reflected immediately;
+        # otherwise the panel claims "not configured" until some other
+        # endpoint happens to rebuild the client.
+        self._refresh_embedder()
         doc_id = request.args.get("id")
         if doc_id:
             doc = self._document_store.read(doc_id)
@@ -794,6 +817,12 @@ class FavaAI(FavaExtensionBase):
     def api_documents_index(self):
         if not self._document_store:
             return jsonify({"error": "Documents are not available"}), 500
+        # `documents.enabled` gates *folder* indexing; chat uploads always work.
+        if not self._documents_config.get("enabled", False):
+            return jsonify({
+                "error": "Folder indexing is disabled",
+                "hint": "Set documents.enabled = true (Config tab) to scan folders",
+            }), 403
         if not self._configured_document_folders():
             return jsonify({
                 "error": "No document folders configured",
@@ -849,6 +878,9 @@ class FavaAI(FavaExtensionBase):
 
     @extension_endpoint("documents_embed_test", methods=["POST"])
     def api_documents_embed_test(self):
+        # Same freshness rule as Embed now: a key saved in the Config tab must
+        # be the one being tested, not the client built at startup.
+        self._refresh_embedder()
         embedder = self._document_store.embedder if self._document_store else None
         if not embedder or not embedder.configured:
             # `error` is what the UI reads; `detail` stays for API consumers.

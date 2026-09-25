@@ -161,3 +161,31 @@ def test_docs_panel_surfaces_extraction_and_embedding_state():
 def test_embedding_test_shows_the_backend_error():
     """The panel read `result.error`, but the endpoint returned `detail` (2.1)."""
     assert "result.error || result.detail" in JS
+
+
+def test_config_labels_are_associated_with_their_inputs():
+    """`<label>` without `for=` is invisible to screen readers (round 2, N5)."""
+    # Fields are rendered through a helper that emits <label for="${id}">.
+    assert '<label for="${id}">' in JS
+    for id_, label in (
+        ("cfg-base-url", "base_url"),
+        ("cfg-api-key", "api_key"),
+        ("cfg-embed-base-url", "embedding.base_url"),
+        ("cfg-embed-model", "embedding.model"),
+        ("cfg-embed-api-key", "embedding.api_key"),
+        ("cfg-max-iterations", "max_iterations"),
+    ):
+        assert f"field('{id_}', '{label}'" in JS, id_
+    # The select and the checkbox are written directly.
+    assert 'for="cfg-provider"' in JS
+    assert 'for="cfg-docs-enabled"' in JS
+
+
+def test_index_button_reflects_the_enabled_flag():
+    """`documents.enabled` gates folder indexing (round 2, N3)."""
+    hint = JS.index("Folder indexing is off")
+    button = JS.index("buttons.push('<button id=")
+    # The hint and the conditional button are emitted together, and the wiring
+    # must not assume the button exists.
+    assert hint < button
+    assert "if (indexBtn)" in JS

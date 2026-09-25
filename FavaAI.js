@@ -750,8 +750,16 @@ export default {
             } else {
                 html += '<p style="font-size:12px;">Semantic search: not configured (keyword search only).<br>Add an <code>documents.embedding</code> endpoint in the <strong>Config</strong> tab to enable it.</p>';
             }
-            html += '<button id="docs-index-btn" class="btn btn-sm">Index now</button>';
-            html += ' <button id="docs-retry-btn" class="btn btn-sm">Retry failed</button>';
+            const indexing = status.enabled !== false;
+            if (!indexing) {
+                html += '<p class="doc-warning">Folder indexing is off — enable <code>documents.enabled</code> in the <strong>Config</strong> tab to scan your folders. Chat uploads are unaffected.</p>';
+            }
+            const buttons = [];
+            if (indexing) {
+                buttons.push('<button id="docs-index-btn" class="btn btn-sm">Index now</button>');
+            }
+            buttons.push('<button id="docs-retry-btn" class="btn btn-sm">Retry failed</button>');
+            html += buttons.join(' ');
             if (embedding.configured) {
                 html += ' <button id="docs-embed-btn" class="btn btn-sm">Embed now</button>';
                 html += ' <button id="docs-embed-test-btn" class="btn btn-sm">Test</button>';
@@ -760,7 +768,8 @@ export default {
             html += '<h4 style="margin-top:14px;">Indexed</h4><div id="docs-list"></div>';
             this.el.panelDocuments.innerHTML = html;
 
-            document.getElementById('docs-index-btn').addEventListener('click', () => this.indexDocuments());
+            const indexBtn = document.getElementById('docs-index-btn');
+            if (indexBtn) indexBtn.addEventListener('click', () => this.indexDocuments());
             document.getElementById('docs-retry-btn').addEventListener('click', () => this.retryDocuments());
             const embedBtn = document.getElementById('docs-embed-btn');
             if (embedBtn) embedBtn.addEventListener('click', () => this.embedDocuments());
@@ -976,28 +985,28 @@ export default {
 
             let html = '<h4>Configuration</h4>';
             html += '<div class="config-form">';
-            html += '<label>Default provider</label>';
+            // Labels are tied to their input with for= so screen readers (and
+            // automated tests) can tell the provider key apart from the
+            // embedding key.
+            const field = (id, label, value, attrs = '') =>
+                `<label for="${id}">${label}</label>` +
+                `<input id="${id}" value="${this.esc(value ?? '')}" ${attrs}>`;
+            html += '<label for="cfg-provider">Default provider</label>';
             html += '<select id="cfg-provider">' + names.map(n =>
                 `<option value="${this.esc(n)}"${n === selected ? ' selected' : ''}>${this.esc(n)}</option>`
             ).join('') + '</select>';
             html += '<div id="cfg-provider-fields"></div>';
-            html += '<label>max_iterations</label>';
-            html += `<input id="cfg-max-iterations" type="number" min="1" value="${this.esc(agent.max_iterations ?? '')}">`;
-            html += '<label>max_tool_calls</label>';
-            html += `<input id="cfg-max-tool-calls" type="number" min="1" value="${this.esc(agent.max_tool_calls ?? '')}">`;
-            html += '<label>timeout_seconds</label>';
-            html += `<input id="cfg-timeout" type="number" min="1" value="${this.esc(agent.timeout_seconds ?? '')}">`;
+            html += field('cfg-max-iterations', 'max_iterations', agent.max_iterations, 'type="number" min="1"');
+            html += field('cfg-max-tool-calls', 'max_tool_calls', agent.max_tool_calls, 'type="number" min="1"');
+            html += field('cfg-timeout', 'timeout_seconds', agent.timeout_seconds, 'type="number" min="1"');
             const documents = config.documents || {};
             const embedding = documents.embedding || {};
             html += '<h4 style="margin-top:14px;">Documents</h4>';
-            html += '<label>enabled</label>';
+            html += '<label for="cfg-docs-enabled">enabled</label>';
             html += `<input id="cfg-docs-enabled" type="checkbox"${documents.enabled ? ' checked' : ''}>`;
-            html += '<label>embedding.base_url</label>';
-            html += `<input id="cfg-embed-base-url" type="text" value="${this.esc(embedding.base_url || '')}" placeholder="http://localhost:8080/v1">`;
-            html += '<label>embedding.model</label>';
-            html += `<input id="cfg-embed-model" type="text" value="${this.esc(embedding.model || '')}" placeholder="qwen3-0.6b-embedding">`;
-            html += '<label>embedding.api_key</label>';
-            html += `<input id="cfg-embed-api-key" type="text" value="${this.esc(embedding.api_key || '')}" placeholder="***">`;
+            html += field('cfg-embed-base-url', 'embedding.base_url', embedding.base_url, 'type="text" placeholder="http://localhost:8080/v1"');
+            html += field('cfg-embed-model', 'embedding.model', embedding.model, 'type="text" placeholder="qwen3-0.6b-embedding"');
+            html += field('cfg-embed-api-key', 'embedding.api_key', embedding.api_key, 'type="text" placeholder="***"');
             html += '<button id="cfg-save" class="btn btn-sm">Save</button>';
             html += '<div id="cfg-status" class="config-status"></div>';
             html += '</div>';
@@ -1008,13 +1017,13 @@ export default {
             const renderProviderFields = () => {
                 const name = document.getElementById('cfg-provider').value;
                 const p = providers[name] || {};
+                const field = (id, label, value, attrs = '') =>
+                    `<label for="${id}">${label}</label>` +
+                    `<input id="${id}" value="${this.esc(value ?? '')}" ${attrs}>`;
                 document.getElementById('cfg-provider-fields').innerHTML =
-                    '<label>base_url</label>' +
-                    `<input id="cfg-base-url" type="text" value="${this.esc(p.base_url || '')}" placeholder="https://.../v1">` +
-                    '<label>model</label>' +
-                    `<input id="cfg-model" type="text" value="${this.esc(p.model || '')}">` +
-                    '<label>api_key</label>' +
-                    `<input id="cfg-api-key" type="text" value="${this.esc(p.api_key || '')}" placeholder="***">`;
+                    field('cfg-base-url', 'base_url', p.base_url, 'type="text" placeholder="https://.../v1"') +
+                    field('cfg-model', 'model', p.model, 'type="text"') +
+                    field('cfg-api-key', 'api_key', p.api_key, 'type="text" placeholder="***"');
             };
             document.getElementById('cfg-provider').addEventListener('change', renderProviderFields);
             renderProviderFields();

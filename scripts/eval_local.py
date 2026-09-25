@@ -252,7 +252,7 @@ def main():
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(
             {"blocking": results, "streaming": stream_results}, indent=2
-        ))
+        ), encoding="utf-8")
         print(f"\nwrote {args.json_out}")
 
 
