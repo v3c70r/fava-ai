@@ -526,6 +526,11 @@ class FavaAI(FavaExtensionBase):
             with open(config_path, "w") as f:
                 yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
             self._config_manager._load_yaml()
+            # Apply both live: otherwise a provider key/URL or embedding
+            # endpoint saved here has no effect until Fava restarts, while the
+            # UI reports "saved".
+            self._provider_registry.reload()
+            self._refresh_embedder()
             return jsonify({"saved": True, "path": str(config_path)})
         except Exception as e:
             logger.exception("failed to write config")
@@ -627,11 +632,17 @@ class FavaAI(FavaExtensionBase):
         return self._config_manager.get_documents_config()
 
     def _refresh_embedder(self):
+        """Rebuild the embedding client and its retrieval threshold from config.
+
+        Called on config save and before every embedding-backed endpoint, so a
+        freshly saved endpoint is the one in use.
+        """
         from fava_ai.documents.embeddings import EmbeddingClient
 
         if self._document_store is not None:
             self._document_store.set_embedder(
-                EmbeddingClient.from_config(self._documents_config.get("embedding"))
+                EmbeddingClient.from_config(self._documents_config.get("embedding")),
+                min_score=self._documents_config.get("hybrid_min_score"),
             )
 
     def _fava_document_values(self) -> list[str]:

@@ -36,6 +36,17 @@ class ProviderRegistry:
                 continue
             self._providers[name] = provider
 
+    def reload(self):
+        """Rebuild every provider client from the current configuration.
+
+        Called after `PUT /config`: without it a key, base_url or model saved
+        in the UI has no effect until Fava is restarted, so the user keeps
+        hitting 401s with a config that reads as successfully saved.
+        """
+        self._providers.clear()
+        self._connection_cache.clear()
+        self._init_from_config()
+
     def get(self, name: str) -> BaseProvider | None:
         return self._providers.get(name)
 

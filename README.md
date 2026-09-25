@@ -304,6 +304,13 @@ Search results carry a `score` (BM25-negated in keyword mode, cosine in dense
 mode, the fused score in hybrid mode) so the agent can tell a strong match from
 a weak one.
 
+Hybrid fusion ignores the dense ranking when even its best cosine is below
+`documents.hybrid_min_score` (default `0.2`). Small embedding models happily
+return a confidently wrong nearest neighbour — observed live: for
+`subaru registration 2023` the 0.6B model's top cosine was ~0.03 and its
+ranking pushed unrelated documents above the correct BM25 hits. Raising the
+threshold is more aggressive; `0.0` always fuses.
+
 > The endpoint must actually serve embeddings: llama.cpp needs `--embeddings`
 > (and many models are loaded without it), Ollama and OpenAI work as-is.
 

@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config inputs are labelled with `for=`, so screen readers can tell the provider key
   from the embedding key.
 - Document tests write UTF-8 explicitly and pass on non-UTF-8 locales (e.g. Windows).
+- **Provider changes needed a Fava restart.** `PUT /config` reported `saved: true` but the
+  provider clients were built once at startup, so a key, `base_url` or model edited in the
+  Config tab kept failing with 401 until Fava was restarted. `ProviderRegistry.reload()`
+  now rebuilds them on save (the same staleness class as the embedding *Test* button), and
+  removing a provider from the config also drops it.
+- **Hybrid search could rank below plain BM25** with a weak embedder: plain reciprocal
+  rank fusion let a confidently-wrong dense top hit drag the fused result down. The dense
+  ranking is now ignored when its best cosine is below `documents.hybrid_min_score`
+  (default `0.2`), so retrieval falls back to BM25 instead of getting worse.
 
 ### Changed
 - **Configuration is now primarily the beancount directive.** The `fava-extension`
